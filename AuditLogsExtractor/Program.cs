@@ -23,7 +23,16 @@ class Program
             DateTime fechaCorte = DateTime.UtcNow.AddMonths(-mesesConservar);
             Logger.Info($"Extrayendo auditoría anterior a: {fechaCorte:yyyy-MM-dd}");
 
-            var entidades = new[] { "account", "contact", "lead" }; // Se puede parametrizar
+            int totalEntidades = int.Parse(config["total_entidades"]);
+            var entidades = new List<(string logicalName, int otc)>();
+
+            for (int i = 1; i <= totalEntidades; i++)
+            {
+                string logicalName = config[$"entidad_{i}_logicalname"];
+                int otc = int.Parse(config[$"entidad_{i}_otc"]);
+                entidades.Add((logicalName, otc));
+            }
+
             var bitacora = new BitacoraManager("bitacora.db");
             var processor = new AuditProcessor(readerProd.ObtenerServicio());
             var exporter = new CsvExporter(readerProd.ObtenerServicio());
@@ -33,7 +42,7 @@ class Program
                 config["sp_user"],
                 config["sp_password"]);
 
-            foreach (var entidad in entidades)
+            foreach (var (entidad, otc) in entidades)
             {
                 Logger.Info($"Procesando entidad: {entidad}");
 
@@ -41,23 +50,34 @@ class Program
 
                 foreach (var recordId in recordIds)
                 {
-                    if (bitacora.Exists(entidad, recordId))
-                        continue;
+                    DateTime? ultimaFecha = bitacora.GetUltimaFechaExportada(entidad, recordId);
 
-                    List<Entity> registros = processor.ObtenerAuditoria(entidad, recordId, fechaCorte);
+                    List<Entity> registros = processor.ObtenerAuditoria(entidad, otc, recordId, fechaCorte);
+
                     if (registros == null || registros.Count == 0)
                         continue;
 
+                    var nuevos = new List<Entity>();
+                    foreach (var r in registros)
+                    {
+                        var fechaRegistro = r.GetAttributeValue<DateTime>("createdon");
+                        if (ultimaFecha == null || fechaRegistro > ultimaFecha)
+                        {
+                            nuevos.Add(r);
+                        }
+                    }
 
+                    if (nuevos.Count == 0)
+                        continue;
 
-                    string archivo = exporter.ExportarGrupoComoCsv(entidad, recordId, registros);
+                    string archivo = exporter.ExportarGrupoComoCsv(entidad, recordId, nuevos);
 
                     string prefijo = recordId.ToString().Substring(0, 2);
                     string nombreArchivo = Path.GetFileName(archivo);
                     string rutaRelativa = $"{entidad}/{prefijo}/{nombreArchivo}";
                     uploader.UploadFile(archivo, rutaRelativa);
 
-                    bitacora.MarkAsExported(entidad, recordId);
+                    bitacora.MarkAsExported(entidad, recordId, fechaCorte);
 
                     Logger.Ok($"Exportado: {archivo}");
 

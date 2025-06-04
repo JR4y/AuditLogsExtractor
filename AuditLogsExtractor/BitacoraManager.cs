@@ -1,4 +1,5 @@
-﻿using System;
+﻿
+using System;
 using LiteDB;
 
 public class BitacoraManager : IDisposable
@@ -11,16 +12,21 @@ public class BitacoraManager : IDisposable
         Console.WriteLine("📒 Bitácora LiteDB cargada.");
     }
 
-    public bool Exists(string entityName, Guid guid)
+    public DateTime? GetUltimaFechaExportada(string entityName, Guid guid)
     {
         var col = _db.GetCollection<BitacoraItem>(GetCollectionName(entityName));
-        return col.Exists(x => x.Id == guid);
+        var item = col.FindById(guid);
+        return item?.UltimaFechaExportada;
     }
 
-    public void MarkAsExported(string entityName, Guid guid)
+    public void MarkAsExported(string entityName, Guid guid, DateTime fecha)
     {
         var col = _db.GetCollection<BitacoraItem>(GetCollectionName(entityName));
-        col.Upsert(new BitacoraItem { Id = guid });
+        col.Upsert(new BitacoraItem
+        {
+            Id = guid,
+            UltimaFechaExportada = fecha
+        });
     }
 
     private static string GetCollectionName(string entityName) => $"bitacora_{entityName}";
@@ -32,4 +38,5 @@ public class BitacoraItem
 {
     [BsonId]
     public Guid Id { get; set; }
+    public DateTime UltimaFechaExportada { get; set; }
 }

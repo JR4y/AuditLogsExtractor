@@ -46,8 +46,44 @@ public class DynamicsReader
         parametros["d365_tenantid"] = config.GetAttributeValue<string>("lyn_d365_tenantid") ?? string.Empty;
         parametros["d365_orgurl"] = config.GetAttributeValue<string>("lyn_d365_orgurl") ?? string.Empty;
 
+        // Guardar el ID del registro de configuración
+        parametros["configuracion_id"] = config.Id.ToString();
+
+        // Consultar entidades auditadas relacionadas a este registro de configuración
+        var queryEntidades = new QueryExpression("lyn_entidad_auditadas")
+        {
+            ColumnSet = new ColumnSet("lyn_logicalname", "lyn_objecttypecode", "lyn_habilitado"),
+            Criteria = new FilterExpression
+            {
+                Conditions =
+            {
+                new ConditionExpression("lyn_configuracion", ConditionOperator.Equal, config.Id),
+                new ConditionExpression("lyn_habilitado", ConditionOperator.Equal, true)
+            }
+            }
+        };
+
+        var resultadoEntidades = _client.RetrieveMultiple(queryEntidades);
+
+        int i = 1;
+        foreach (var entidad in resultadoEntidades.Entities)
+        {
+            var ln = entidad.GetAttributeValue<string>("lyn_logicalname");
+            var objectTypeCode = entidad.GetAttributeValue<int>("lyn_objecttypecode");
+
+            if (!string.IsNullOrEmpty(logicalName))
+            {
+                parametros[$"entidad_{i}_logicalname"] = ln;
+                parametros[$"entidad_{i}_otc"] = objectTypeCode.ToString();
+                i++;
+            }
+        }
+
+        parametros["total_entidades"] = (i - 1).ToString();
+
         return parametros;
     }
+
     public List<Guid> ObtenerRecordIds(string entidad, DateTime fechaCorte)
     {
         var ids = new List<Guid>();

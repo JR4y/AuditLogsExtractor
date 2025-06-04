@@ -38,7 +38,7 @@ public class AuditProcessor
         return resultado;
     }
 
-    public List<Entity> ObtenerAuditoria(string entidad, Guid recordId, DateTime fechaCorte)
+    public List<Entity> ObtenerAuditoria(string entidad, int objectTypeCode, Guid recordId, DateTime fechaCorte)
     {
         var auditorias = new List<Entity>();
 
@@ -56,7 +56,9 @@ public class AuditProcessor
                 var audit = attrDetail.AuditRecord;
 
                 var createdOn = audit.GetAttributeValue<DateTime>("createdon");
-                if (createdOn > fechaCorte)
+
+                // 👉 Aquí aplicamos el corte
+                if (createdOn >= fechaCorte)
                     continue;
 
                 var action = audit.GetAttributeValue<OptionSetValue>("action")?.Value ?? -1;
@@ -91,15 +93,4 @@ public class AuditProcessor
         return auditorias;
     }
 
-    public int ObtenerObjectTypeCode(IOrganizationService service, string logicalName)
-    {
-        var req = new RetrieveEntityRequest
-        {
-            LogicalName = logicalName,
-            EntityFilters = EntityFilters.Entity
-        };
-
-        var res = (RetrieveEntityResponse)service.Execute(req);
-        return res.EntityMetadata.ObjectTypeCode.GetValueOrDefault();
-    }
 }
