@@ -5,6 +5,7 @@ using LiteDB;
 public class BitacoraManager : IDisposable
 {
     private readonly LiteDatabase _db;
+    private readonly object _lock = new object();
 
     public BitacoraManager(string dbPath)
     {
@@ -14,19 +15,25 @@ public class BitacoraManager : IDisposable
 
     public DateTime? GetUltimaFechaExportada(string entityName, Guid guid)
     {
-        var col = _db.GetCollection<BitacoraItem>(GetCollectionName(entityName));
-        var item = col.FindById(guid);
-        return item?.UltimaFechaExportada;
+        lock (_lock)
+        {
+            var col = _db.GetCollection<BitacoraItem>(GetCollectionName(entityName));
+            var item = col.FindById(guid);
+            return item?.UltimaFechaExportada;
+        }
     }
 
     public void MarkAsExported(string entityName, Guid guid, DateTime fecha)
     {
-        var col = _db.GetCollection<BitacoraItem>(GetCollectionName(entityName));
-        col.Upsert(new BitacoraItem
+        lock (_lock)
         {
-            Id = guid,
-            UltimaFechaExportada = fecha
-        });
+            var col = _db.GetCollection<BitacoraItem>(GetCollectionName(entityName));
+            col.Upsert(new BitacoraItem
+            {
+                Id = guid,
+                UltimaFechaExportada = fecha
+            });
+        }
     }
 
     private static string GetCollectionName(string entityName) => $"bitacora_{entityName}";

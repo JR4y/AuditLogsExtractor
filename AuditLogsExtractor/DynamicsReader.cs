@@ -88,26 +88,48 @@ public class DynamicsReader
     {
         var ids = new List<Guid>();
 
-        var query = new QueryExpression(entidad)
-        {
-            ColumnSet = new ColumnSet("createdon"), // o vacío si no hace falta
-            Criteria = new FilterExpression
-            {
-                Conditions =
-            {
-                new ConditionExpression("createdon", ConditionOperator.OnOrBefore, fechaCorte)
-            }
-            }
-        };
+        int pageNumber = 1;
+        string pagingCookie = null;
+        bool moreRecords = true;
 
-        EntityCollection results = _client.RetrieveMultiple(query);
-        foreach (var entity in results.Entities)
+        while (moreRecords)
         {
-            if (entity.Id != Guid.Empty)
-                ids.Add(entity.Id);
+            var query = new QueryExpression(entidad)
+            {
+                ColumnSet = new ColumnSet("createdon"), // o ColumnSet(false) si no necesitas nada
+                Criteria = new FilterExpression
+                {
+                    Conditions =
+                {
+                    new ConditionExpression("createdon", ConditionOperator.OnOrBefore, fechaCorte)
+                }
+                },
+                PageInfo = new PagingInfo
+                {
+                    Count = 5000,
+                    PageNumber = pageNumber,
+                    PagingCookie = pagingCookie
+                }
+            };
+
+            EntityCollection results = _client.RetrieveMultiple(query);
+
+            foreach (var entity in results.Entities)
+            {
+                if (entity.Id != Guid.Empty)
+                    ids.Add(entity.Id);
+            }
+
+            moreRecords = results.MoreRecords;
+            if (moreRecords)
+            {
+                pageNumber++;
+                pagingCookie = results.PagingCookie;
+            }
         }
 
         return ids;
     }
+
     public IOrganizationService ObtenerServicio() => _client;
 }

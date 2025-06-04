@@ -58,7 +58,7 @@ public static class AuditHelper
         string cacheKey = entityLogicalName + "." + fieldName;
 
         if (OptionSetCache.ContainsKey(cacheKey) && OptionSetCache[cacheKey].ContainsKey(value))
-            return OptionSetCache[cacheKey][value] + " (" + value + ")";
+            return OptionSetCache[cacheKey][value] /*+ " (" + value + ")"*/;
 
         var options = new Dictionary<int, string>();
 
