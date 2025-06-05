@@ -1,5 +1,4 @@
-﻿
-using System;
+﻿using System;
 using LiteDB;
 
 public class BitacoraManager : IDisposable
@@ -23,7 +22,7 @@ public class BitacoraManager : IDisposable
         }
     }
 
-    public void MarkAsExported(string entityName, Guid guid, DateTime fecha)
+    public void MarkAsExported(string entityName, Guid guid, DateTime fecha, string estado)
     {
         lock (_lock)
         {
@@ -31,8 +30,19 @@ public class BitacoraManager : IDisposable
             col.Upsert(new BitacoraItem
             {
                 Id = guid,
-                UltimaFechaExportada = fecha
+                UltimaFechaExportada = fecha,
+                Estado = estado
             });
+        }
+    }
+
+    public string GetEstado(string entityName, Guid guid)
+    {
+        lock (_lock)
+        {
+            var col = _db.GetCollection<BitacoraItem>(GetCollectionName(entityName));
+            var item = col.FindById(guid);
+            return item?.Estado ?? "desconocido";
         }
     }
 
@@ -45,5 +55,8 @@ public class BitacoraItem
 {
     [BsonId]
     public Guid Id { get; set; }
+
     public DateTime UltimaFechaExportada { get; set; }
+
+    public string Estado { get; set; } // Ej: "subido", "omitido", "error_subida"
 }

@@ -47,7 +47,6 @@ class Program
             var cts = new CancellationTokenSource();
             var token = cts.Token;
 
-            // 🟡 Lanzar monitor de archivo de pausa
             Task.Run(() =>
             {
                 while (!token.IsCancellationRequested)
@@ -113,20 +112,17 @@ class Program
                         try
                         {
                             uploader.UploadFile(archivo, rutaRelativa);
-                            bitacora.MarkAsExported(entidad, recordId, fechaCorte);
+                            bitacora.MarkAsExported(entidad, recordId, fechaCorte, "subido");
 
-                            // ✅ Eliminación segura del archivo local
                             if (File.Exists(archivo))
-                            {
                                 File.Delete(archivo);
-                                //Logger.Trace($"🧹 Eliminado: {Path.GetFileName(archivo)}");
-                            }
 
                             Interlocked.Increment(ref procesados);
                         }
                         catch (Exception ex)
                         {
                             Logger.Error($"❌ Error al subir/eliminar archivo {archivo}: {ex.Message}");
+                            bitacora.MarkAsExported(entidad, recordId, fechaCorte, "error_subida");
                             Interlocked.Increment(ref errores);
                         }
 

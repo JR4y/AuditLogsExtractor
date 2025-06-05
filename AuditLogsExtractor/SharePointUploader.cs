@@ -30,17 +30,25 @@ using System.Xml;
                     return;
                 }
 
-                //Console.WriteLine("🔐 Autenticando contra SharePoint Online...");
-                CookieContainer authCookies = GetAuthenticationCookies(_siteUrl, _username, _password);
+            CookieContainer authCookies;
+            try
+            {
+                authCookies = GetAuthenticationCookies(_siteUrl, _username, _password);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Error en autenticación SAML: {ex.Message}");
+                throw; // Propaga para que sea gestionado arriba, donde ya tienes control por entidad
+            }
 
-                if (authCookies == null)
-                {
-                    Console.WriteLine("❌ No se pudieron obtener cookies de autenticación.");
-                    return;
-                }
+            if (authCookies == null)
+            {
+                Console.WriteLine("❌ No se obtuvieron cookies de autenticación.");
+                return;
+            }
 
-                // Crear estructura de carpetas en SharePoint
-                string relativeFolder = Path.GetDirectoryName(sharepointRelativePath)?.Replace("\\", "/") ?? "";
+            // Crear estructura de carpetas en SharePoint
+            string relativeFolder = Path.GetDirectoryName(sharepointRelativePath)?.Replace("\\", "/") ?? "";
                 if (!string.IsNullOrEmpty(relativeFolder))
                 {
                     string[] folders = relativeFolder.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
@@ -53,10 +61,8 @@ using System.Xml;
                     }
                 }
 
-                // Subir archivo real
+            // Subir archivo real
                 string uploadUrl = $"{_siteUrl.TrimEnd('/')}{(_uploadFolder.StartsWith("/") ? "" : "/")}{_uploadFolder.TrimEnd('/')}/{sharepointRelativePath.Replace("\\", "/")}";
-                //Console.WriteLine($"📤 Subiendo archivo real a: {uploadUrl}");
-
                 byte[] fileBytes = File.ReadAllBytes(localFilePath);
 
                 HttpWebRequest request = (HttpWebRequest)WebRequest.Create(uploadUrl);
@@ -71,23 +77,34 @@ using System.Xml;
                     requestStream.Write(fileBytes, 0, fileBytes.Length);
                 }
 
+            try
+            {
                 using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
                 {
-                    if (response.StatusCode == HttpStatusCode.Created || response.StatusCode == HttpStatusCode.OK)
+                    if (response.StatusCode != HttpStatusCode.Created && response.StatusCode != HttpStatusCode.OK)
                     {
-                        //Console.WriteLine("✅ Archivo subido exitosamente.");
-                    }
-                    else
-                    {
-                        Console.WriteLine($"⚠️ Respuesta inesperada: {response.StatusCode}");
+                        throw new Exception($"Respuesta inesperada del servidor al subir archivo: {response.StatusCode}");
                     }
                 }
             }
+            catch (WebException ex)
+            {
+                if (ex.Response is HttpWebResponse resp)
+                {
+                    throw new Exception($"❌ Fallo en subida. Código HTTP: {resp.StatusCode}, Descripción: {resp.StatusDescription}", ex);
+                }
+                else
+                {
+                    throw new Exception("❌ Fallo desconocido al subir archivo (sin respuesta HTTP).", ex);
+                }
+            }
+        }
             catch (Exception ex)
             {
                 Console.WriteLine($"❌ Error subiendo archivo: {ex.Message}");
-            }
+                throw; // <== esta línea es la que falta
         }
+    }
 
         private void EnsureSharePointFolder(string siteUrl, string folderRelativeUrl, CookieContainer authCookies)
         {
@@ -124,88 +141,97 @@ using System.Xml;
             }
         }
 
-        private CookieContainer GetAuthenticationCookies(string siteUrl, string username, string password)
+    private CookieContainer GetAuthenticationCookies(string siteUrl, string username, string password)
+    {
+        try
         {
-            try
+            string stsUrl = "https://login.microsoftonline.com/extSTS.srf";
+            string soapEnvelope = $"<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
+                "<s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\" xmlns:a=\"http://www.w3.org/2005/08/addressing\" xmlns:u=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd\">" +
+                "<s:Header>" +
+                "<a:Action s:mustUnderstand=\"1\">http://schemas.xmlsoap.org/ws/2005/02/trust/RST/Issue</a:Action>" +
+                "<a:To s:mustUnderstand=\"1\">https://login.microsoftonline.com/extSTS.srf</a:To>" +
+                "<o:Security s:mustUnderstand=\"1\" xmlns:o=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd\">" +
+                $"<o:UsernameToken><o:Username>{username}</o:Username><o:Password>{password}</o:Password></o:UsernameToken>" +
+                "</o:Security></s:Header><s:Body>" +
+                "<t:RequestSecurityToken xmlns:t=\"http://schemas.xmlsoap.org/ws/2005/02/trust\">" +
+                "<wsp:AppliesTo xmlns:wsp=\"http://schemas.xmlsoap.org/ws/2004/09/policy\">" +
+                $"<a:EndpointReference><a:Address>{siteUrl}</a:Address></a:EndpointReference>" +
+                "</wsp:AppliesTo><t:RequestType>http://schemas.xmlsoap.org/ws/2005/02/trust/Issue</t:RequestType>" +
+                "</t:RequestSecurityToken></s:Body></s:Envelope>";
+
+            byte[] bodyBytes = Encoding.UTF8.GetBytes(soapEnvelope);
+
+            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(stsUrl);
+            request.Method = "POST";
+            request.ContentType = "application/soap+xml; charset=utf-8";
+            request.ContentLength = bodyBytes.Length;
+
+            using (Stream stream = request.GetRequestStream())
             {
-                string stsUrl = "https://login.microsoftonline.com/extSTS.srf";
-                string soapEnvelope = $"<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
-                    "<s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\" xmlns:a=\"http://www.w3.org/2005/08/addressing\" xmlns:u=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd\">" +
-                    "<s:Header>" +
-                    "<a:Action s:mustUnderstand=\"1\">http://schemas.xmlsoap.org/ws/2005/02/trust/RST/Issue</a:Action>" +
-                    "<a:To s:mustUnderstand=\"1\">https://login.microsoftonline.com/extSTS.srf</a:To>" +
-                    "<o:Security s:mustUnderstand=\"1\" xmlns:o=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd\">" +
-                    $"<o:UsernameToken><o:Username>{username}</o:Username><o:Password>{password}</o:Password></o:UsernameToken>" +
-                    "</o:Security></s:Header><s:Body>" +
-                    "<t:RequestSecurityToken xmlns:t=\"http://schemas.xmlsoap.org/ws/2005/02/trust\">" +
-                    "<wsp:AppliesTo xmlns:wsp=\"http://schemas.xmlsoap.org/ws/2004/09/policy\">" +
-                    $"<a:EndpointReference><a:Address>{siteUrl}</a:Address></a:EndpointReference>" +
-                    "</wsp:AppliesTo><t:RequestType>http://schemas.xmlsoap.org/ws/2005/02/trust/Issue</t:RequestType>" +
-                    "</t:RequestSecurityToken></s:Body></s:Envelope>";
-
-                byte[] bodyBytes = Encoding.UTF8.GetBytes(soapEnvelope);
-
-                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(stsUrl);
-                request.Method = "POST";
-                request.ContentType = "application/soap+xml; charset=utf-8";
-                request.ContentLength = bodyBytes.Length;
-
-                using (Stream stream = request.GetRequestStream())
-                {
-                    stream.Write(bodyBytes, 0, bodyBytes.Length);
-                }
-
-                string token = null;
-                using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
-                using (StreamReader reader = new StreamReader(response.GetResponseStream()))
-                {
-                    string responseXml = reader.ReadToEnd();
-                    var doc = new XmlDocument();
-                    doc.LoadXml(responseXml);
-
-                    XmlNode binaryTokenNode = doc.GetElementsByTagName("wsse:BinarySecurityToken")[0];
-                    if (binaryTokenNode != null)
-                    {
-                        token = binaryTokenNode.InnerText;
-                        //Console.WriteLine("🔒 Token recibido:");
-                        //Console.WriteLine(token.Substring(0, Math.Min(100, token.Length)) + "...");
-                    }
-                }
-
-                if (string.IsNullOrEmpty(token)) return null;
-
-                string signInUrl = new Uri(new Uri(siteUrl), "/_forms/default.aspx?wa=wsignin1.0").ToString();
-                HttpWebRequest signInRequest = (HttpWebRequest)WebRequest.Create(signInUrl);
-                signInRequest.Method = "POST";
-                signInRequest.ContentType = "application/x-www-form-urlencoded";
-                signInRequest.UserAgent = "Mozilla/5.0";
-                signInRequest.Accept = "text/html,application/xhtml+xml,application/xml";
-                signInRequest.Headers.Add("Accept-Encoding", "gzip, deflate");
-                signInRequest.Headers.Add("Accept-Language", "es-ES");
-                signInRequest.KeepAlive = false;
-
-                byte[] tokenBytes = Encoding.UTF8.GetBytes(token);
-                signInRequest.ContentLength = tokenBytes.Length;
-
-                CookieContainer cookieContainer = new CookieContainer();
-                signInRequest.CookieContainer = cookieContainer;
-
-                using (Stream requestStream = signInRequest.GetRequestStream())
-                {
-                    requestStream.Write(tokenBytes, 0, tokenBytes.Length);
-                }
-
-                using (HttpWebResponse response = (HttpWebResponse)signInRequest.GetResponse())
-                {
-                    return signInRequest.CookieContainer;
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("❌ Error en autenticación SAML: " + ex.Message);
+                stream.Write(bodyBytes, 0, bodyBytes.Length);
             }
 
-            return null;
+            string token = null;
+            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+            using (StreamReader reader = new StreamReader(response.GetResponseStream()))
+            {
+                string responseXml = reader.ReadToEnd();
+                var doc = new XmlDocument();
+                doc.LoadXml(responseXml);
+
+                XmlNode binaryTokenNode = doc.GetElementsByTagName("wsse:BinarySecurityToken")[0];
+                if (binaryTokenNode != null)
+                {
+                    token = binaryTokenNode.InnerText;
+                }
+            }
+
+            if (string.IsNullOrEmpty(token)) return null;
+
+            string signInUrl = new Uri(new Uri(siteUrl), "/_forms/default.aspx?wa=wsignin1.0").ToString();
+            HttpWebRequest signInRequest = (HttpWebRequest)WebRequest.Create(signInUrl);
+            signInRequest.Method = "POST";
+            signInRequest.ContentType = "application/x-www-form-urlencoded";
+            signInRequest.UserAgent = "Mozilla/5.0";
+            signInRequest.Accept = "text/html,application/xhtml+xml,application/xml";
+            signInRequest.Headers.Add("Accept-Encoding", "gzip, deflate");
+            signInRequest.Headers.Add("Accept-Language", "es-ES");
+            signInRequest.KeepAlive = false;
+
+            byte[] tokenBytes = Encoding.UTF8.GetBytes(token);
+            signInRequest.ContentLength = tokenBytes.Length;
+
+            CookieContainer cookieContainer = new CookieContainer();
+            signInRequest.CookieContainer = cookieContainer;
+
+            using (Stream requestStream = signInRequest.GetRequestStream())
+            {
+                requestStream.Write(tokenBytes, 0, tokenBytes.Length);
+            }
+
+            using (HttpWebResponse response = (HttpWebResponse)signInRequest.GetResponse())
+            {
+                return signInRequest.CookieContainer;
+            }
+        }
+        catch (WebException ex)
+        {
+            if (ex.Response is HttpWebResponse resp)
+            {
+                var statusCode = (int)resp.StatusCode;
+                var statusDesc = resp.StatusDescription;
+                throw new Exception($"❌ Error en autenticación SAML: HTTP {statusCode} - {statusDesc}", ex);
+            }
+            else
+            {
+                throw new Exception("❌ Error desconocido en autenticación SAML (sin respuesta HTTP).", ex);
+            }
+        }
+        catch (Exception ex)
+        {
+            throw new Exception("❌ Error inesperado en autenticación SAML.", ex);
         }
     }
+}
 
