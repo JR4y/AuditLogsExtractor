@@ -1,9 +1,8 @@
-﻿using Microsoft.Xrm.Sdk;
-using Microsoft.Xrm.Sdk.Messages;
-using Microsoft.Xrm.Sdk.Metadata;
-using Microsoft.Crm.Sdk.Messages;
+﻿using Microsoft.Crm.Sdk.Messages;
+using Microsoft.Xrm.Sdk;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 public class AuditProcessor
 {
@@ -51,20 +50,20 @@ public class AuditProcessor
 
         foreach (var detail in resp.AuditDetailCollection.AuditDetails)
         {
+            var audit = detail.AuditRecord;
+            var createdOn = audit.GetAttributeValue<DateTime>("createdon");
+            if (createdOn >= fechaCorte)
+                continue;
+
+            int actionCode = audit.Attributes.Contains("action") && audit["action"] is OptionSetValue opt
+                ? opt.Value
+                : InferRelationshipAction(detail);
+
+            var userRef = audit.GetAttributeValue<EntityReference>("userid");
+            var objRef = audit.GetAttributeValue<EntityReference>("objectid");
+
             if (detail is AttributeAuditDetail attrDetail)
             {
-                var audit = attrDetail.AuditRecord;
-
-                var createdOn = audit.GetAttributeValue<DateTime>("createdon");
-
-                // 👉 Aquí aplicamos el corte
-                if (createdOn >= fechaCorte)
-                    continue;
-
-                var action = audit.GetAttributeValue<OptionSetValue>("action")?.Value ?? -1;
-                var user = audit.GetAttributeValue<EntityReference>("userid")?.Name ?? string.Empty;
-                var objRef = audit.GetAttributeValue<EntityReference>("objectid");
-
                 foreach (var attr in attrDetail.NewValue.Attributes)
                 {
                     var record = new Entity("audit")
@@ -73,8 +72,11 @@ public class AuditProcessor
                     };
 
                     record["createdon"] = createdOn;
-                    record["action"] = new OptionSetValue(action);
-                    record["userid"] = new EntityReference("systemuser", audit.GetAttributeValue<EntityReference>("userid")?.Id ?? Guid.Empty) { Name = user };
+                    record["action"] = new OptionSetValue(actionCode); // ✅ como OptionSetValue
+                    record["userid"] = new EntityReference("systemuser", userRef?.Id ?? Guid.Empty)
+                    {
+                        Name = userRef?.Name ?? string.Empty
+                    };
                     record["objectid"] = objRef;
                     record["attributelogicalname"] = attr.Key;
 
@@ -88,9 +90,48 @@ public class AuditProcessor
                     auditorias.Add(record);
                 }
             }
+            else if (detail is RelationshipAuditDetail relDetail)
+            {
+                // 🔥 EXCLUIR asociaciones para mejorar legibilidad y rendimiento
+                continue;
+                var record = new Entity("audit")
+                {
+                    Id = audit.Id
+                };
+
+                string tipoRelacion = relDetail.RelationshipName ?? "(sin nombre)";
+                string idsAsociados = relDetail.TargetRecords != null
+                    ? string.Join(", ", relDetail.TargetRecords.Select(x => x.Id.ToString()))
+                    : "(vacío)";
+
+                string resumen = actionCode == 34
+                    ? $"Desasociados: {idsAsociados}"
+                    : $"Asociados: {idsAsociados}";
+
+                record["createdon"] = createdOn;
+                record["action"] = new OptionSetValue(actionCode); // ✅ como OptionSetValue
+                record["userid"] = new EntityReference("systemuser", userRef?.Id ?? Guid.Empty)
+                {
+                    Name = userRef?.Name ?? string.Empty
+                };
+                record["objectid"] = objRef;
+                record["attributelogicalname"] = tipoRelacion;
+                record["oldvalue"] = null;
+                record["newvalue"] = resumen;
+
+                auditorias.Add(record);
+            }
         }
 
         return auditorias;
     }
 
+    private int InferRelationshipAction(AuditDetail detail)
+    {
+        if (detail is RelationshipAuditDetail rel)
+        {
+            return (rel.TargetRecords?.Count ?? 0) > 0 ? 12 : 13;
+        }
+        return -1;
+    }
 }

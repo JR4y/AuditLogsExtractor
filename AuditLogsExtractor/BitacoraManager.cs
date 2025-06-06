@@ -1,5 +1,6 @@
-﻿using System;
-using LiteDB;
+﻿using LiteDB;
+using System;
+using System.Collections.Generic;
 
 public class BitacoraManager : IDisposable
 {
@@ -46,12 +47,62 @@ public class BitacoraManager : IDisposable
         }
     }
 
+    public IEnumerable<(string Entidad, Guid RecordId, DateTime Fecha)> ObtenerErroresSubida()
+    {
+        lock (_lock)
+        {
+            foreach (var colName in _db.GetCollectionNames())
+            {
+                if (!colName.StartsWith("bitacora_")) continue;
+
+                var entidad = colName.Replace("bitacora_", "");
+                var col = _db.GetCollection<BitacoraItem>(colName);
+
+                foreach (var item in col.Find(x => x.Estado == "error_subida"))
+                {
+                    yield return (entidad, item.Id, item.UltimaFechaExportada);
+                }
+            }
+        }
+    }
+
+    public void MarcarReintentoExitoso(string entityName, Guid guid, DateTime fecha)
+    {
+        MarkAsExported(entityName, guid, fecha, "subido");
+    }
+
     private static string GetCollectionName(string entityName) => $"bitacora_{entityName}";
+
+    public IEnumerable<Guid> ObtenerIdsPorEstado(string entidad, string estado)
+    {
+        lock (_lock)
+        {
+            var col = _db.GetCollection<BitacoraItem>($"bitacora_{entidad}");
+            foreach (var item in col.Find(x => x.Estado == estado))
+                yield return item.Id;
+        }
+    }
+
+    public void GuardarResumenEjecucion(ResumenEjecucion resumen)
+    {
+        try
+        {
+            lock (_lock)
+            {
+                var col = _db.GetCollection<ResumenEjecucion>("resumen_ejecucion");
+                col.Insert(resumen);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Error al guardar resumen de ejecución: {ex.Message}");
+        }
+    }
 
     public void Dispose() => _db?.Dispose();
 }
 
-public class BitacoraItem
+    public class BitacoraItem
 {
     [BsonId]
     public Guid Id { get; set; }
@@ -59,4 +110,16 @@ public class BitacoraItem
     public DateTime UltimaFechaExportada { get; set; }
 
     public string Estado { get; set; } // Ej: "subido", "omitido", "error_subida"
+}
+
+    public class ResumenEjecucion
+{
+    public int Id { get; set; }
+    public DateTime FechaEjecucion { get; set; }
+    public string Entidad { get; set; }
+    public int Total { get; set; }
+    public int Omitidos { get; set; }
+    public int Exportados { get; set; }
+    public int ConErrorSubida { get; set; }
+    public TimeSpan Duracion { get; set; }
 }

@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Configuration;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -44,22 +45,21 @@ class Program
                 config["sp_user"],
                 config["sp_password"]);
 
+            EjecutarReintentosFallidos(bitacora, uploader);
+
             var cts = new CancellationTokenSource();
             var token = cts.Token;
 
-            Task.Run(() =>
+            FileSystemWatcher watcher = new FileSystemWatcher(Directory.GetCurrentDirectory(), "pause.signal")
             {
-                while (!token.IsCancellationRequested)
-                {
-                    if (File.Exists("pause.signal"))
-                    {
-                        Logger.Warning("⚠️ Pausa detectada. Finalizando ejecución de forma segura...");
-                        cts.Cancel();
-                        break;
-                    }
-                    Thread.Sleep(1000);
-                }
-            });
+                EnableRaisingEvents = true
+            };
+
+            watcher.Created += (s, e) =>
+            {
+                Logger.Warning("⚠️ Pausa detectada. Finalizando ejecución de forma segura...");
+                cts.Cancel();
+            };
 
             foreach (var (entidad, otc) in entidades)
             {
@@ -70,90 +70,122 @@ class Program
                 int procesados = 0, omitidos = 0, errores = 0;
                 var inicioEntidad = DateTime.Now;
 
-                Parallel.ForEach(recordIds, new ParallelOptions
-                {
-                    MaxDegreeOfParallelism = 4,
-                    CancellationToken = token
-                }, recordId =>
-                {
-                    if (token.IsCancellationRequested)
-                        return;
+                var guidsProcesados = bitacora
+                    .ObtenerIdsPorEstado(entidad, "subido")
+                    .Concat(bitacora.ObtenerIdsPorEstado(entidad, "omitido"))
+                    .ToHashSet();
 
-                    try
+                try
+                {
+                    Parallel.ForEach(recordIds, new ParallelOptions
                     {
-                        DateTime? ultimaFecha = bitacora.GetUltimaFechaExportada(entidad, recordId);
-                        List<Entity> registros = processor.ObtenerAuditoria(entidad, otc, recordId, fechaCorte);
-
-                        if (registros == null || registros.Count == 0)
-                        {
-                            Interlocked.Increment(ref omitidos);
+                        MaxDegreeOfParallelism = 4,
+                        CancellationToken = token
+                    }, recordId =>
+                    {
+                        if (token.IsCancellationRequested)
                             return;
-                        }
-
-                        var nuevos = new List<Entity>();
-                        foreach (var r in registros)
-                        {
-                            var fechaRegistro = r.GetAttributeValue<DateTime>("createdon");
-                            if (ultimaFecha == null || fechaRegistro > ultimaFecha)
-                                nuevos.Add(r);
-                        }
-
-                        if (nuevos.Count == 0)
-                        {
-                            Interlocked.Increment(ref omitidos);
-                            return;
-                        }
-
-                        string archivo = exporter.ExportarGrupoComoCsv(entidad, recordId, nuevos);
-                        string prefijo = recordId.ToString().Substring(0, 2);
-                        string nombreArchivo = Path.GetFileName(archivo);
-                        string rutaRelativa = $"{entidad}/{prefijo}/{nombreArchivo}";
 
                         try
                         {
-                            uploader.UploadFile(archivo, rutaRelativa);
-                            bitacora.MarkAsExported(entidad, recordId, fechaCorte, "subido");
+                            if (guidsProcesados.Contains(recordId))
+                            {
+                                Interlocked.Increment(ref omitidos);
+                                return;
+                            }
 
-                            if (File.Exists(archivo))
-                                File.Delete(archivo);
+                            DateTime? ultimaFecha = bitacora.GetUltimaFechaExportada(entidad, recordId);
+                            List<Entity> registros = processor.ObtenerAuditoria(entidad, otc, recordId, fechaCorte);
 
-                            Interlocked.Increment(ref procesados);
+                            if (registros == null || registros.Count == 0)
+                            {
+                                Interlocked.Increment(ref omitidos);
+                                return;
+                            }
+
+                            var nuevos = registros
+                                .Where(r => !ultimaFecha.HasValue || r.GetAttributeValue<DateTime>("createdon") > ultimaFecha)
+                                .ToList();
+
+                            if (nuevos.Count == 0)
+                            {
+                                Interlocked.Increment(ref omitidos);
+                                bitacora.MarkAsExported(entidad, recordId, fechaCorte, "omitido"); // 👈 esto falta
+                                return;
+                            }
+
+                            string archivo = exporter.ExportarGrupoComoCsv(entidad, recordId, nuevos);
+                            string prefijo = recordId.ToString().Substring(0, 2);
+                            string nombreArchivo = Path.GetFileName(archivo);
+                            string rutaRelativa = $"{entidad}/{prefijo}/{nombreArchivo}";
+
+                            try
+                            {
+                                uploader.UploadFile(archivo, rutaRelativa);
+                                bitacora.MarkAsExported(entidad, recordId, fechaCorte, "subido");
+
+                                if (File.Exists(archivo))
+                                    File.Delete(archivo);
+
+                                Interlocked.Increment(ref procesados);
+                            }
+                            catch (Exception ex)
+                            {
+                                Logger.Error($"❌ Error al subir/eliminar archivo {archivo}: {ex.Message}");
+                                bitacora.MarkAsExported(entidad, recordId, fechaCorte, "error_subida");
+                                Interlocked.Increment(ref errores);
+                            }
+
+                            var totalActual = procesados + omitidos + errores;
+                            if (totalActual % 10 == 0)
+                            {
+                                double avance = (double)totalActual / total * 100;
+                                lock (typeof(Logger))
+                                {
+                                    Console.ForegroundColor = ConsoleColor.Cyan;
+                                    Console.Write($"\r[Progreso] {DateTime.Now:HH:mm:ss} > {entidad}: {avance:0.#}% ({totalActual}/{total})   ");
+                                    Console.ResetColor();
+                                }
+                            }
                         }
                         catch (Exception ex)
                         {
-                            Logger.Error($"❌ Error al subir/eliminar archivo {archivo}: {ex.Message}");
-                            bitacora.MarkAsExported(entidad, recordId, fechaCorte, "error_subida");
                             Interlocked.Increment(ref errores);
+                            Logger.Error($"❌ Error al procesar {entidad} - {recordId}: {ex.Message}");
                         }
+                    });
+                }
+                catch (OperationCanceledException)
+                {
+                    Logger.Warning("⏸️ Proceso pausado. Puede reanudarse sin pérdida de información.");
+                    throw;
+                }
 
-                        var totalActual = procesados + omitidos + errores;
-                        if (totalActual % 10 == 0)
+                finally
+                {
+                    var dur = DateTime.Now - inicioEntidad;
+                    string resHora = DateTime.Now.ToString("HH:mm:ss");
+                    Logger.Ok($"[{resHora}] ✅ Resumen {entidad} → Exportados: {procesados}, Omitidos: {omitidos}, Errores: {errores}, Tiempo: {dur:mm\\:ss}");
+
+                    try
+                    {
+                        bitacora.GuardarResumenEjecucion(new ResumenEjecucion
                         {
-                            double avance = (double)totalActual / total * 100;
-                            lock (typeof(Logger))
-                            {
-                                Console.ForegroundColor = ConsoleColor.Cyan;
-                                Console.Write($"\r[Progreso] {DateTime.Now:HH:mm:ss} > {entidad}: {avance:0.#}% ({totalActual}/{total})   ");
-                                Console.ResetColor();
-                            }
-                        }
+                            FechaEjecucion = DateTime.Now,
+                            Entidad = entidad,
+                            Total = total,
+                            Omitidos = omitidos,
+                            Exportados = procesados,
+                            ConErrorSubida = errores,
+                            Duracion = dur
+                        });
                     }
                     catch (Exception ex)
                     {
-                        Interlocked.Increment(ref errores);
-                        Logger.Error($"❌ Error al procesar {entidad} - {recordId}: {ex.Message}");
+                        Logger.Error($"❌ Error al guardar resumen: {ex.Message}");
                     }
-                });
-
-                if (token.IsCancellationRequested)
-                {
-                    Logger.Warning("⏸️ Proceso pausado. Puede reanudarse sin pérdida de información.");
-                    return;
-                }
-
-                var duracion = DateTime.Now - inicioEntidad;
-                string resumenHora = DateTime.Now.ToString("HH:mm:ss");
-                Logger.Ok($"[{resumenHora}] ✅ Resumen {entidad} → Exportados: {procesados}, Omitidos: {omitidos}, Errores: {errores}, Tiempo: {duracion:mm\\:ss}");
+                }               
+                EjecutarReintentosFallidos(bitacora, uploader);
             }
 
             Logger.Ok("Extracción de auditoría finalizada con éxito.");
@@ -166,5 +198,39 @@ class Program
         {
             Logger.Error(ex.ToString());
         }
+    }
+
+    private static void EjecutarReintentosFallidos(BitacoraManager bitacora, SharePointUploader uploader)
+    {
+        Logger.Info("♻️ Iniciando reintento de subidas fallidas...");
+
+        foreach (var (entidad, recordId, fecha) in bitacora.ObtenerErroresSubida())
+        {
+            string archivo = $"output\\{recordId}.csv";
+            if (!File.Exists(archivo))
+            {
+                Logger.Warning($"⚠️ Archivo pendiente no encontrado: {archivo}");
+                continue;
+            }
+
+            try
+            {
+                string prefijo = recordId.ToString().Substring(0, 2);
+                string rutaRelativa = $"{entidad}/{prefijo}/{Path.GetFileName(archivo)}";
+
+                uploader.UploadFile(archivo, rutaRelativa);
+                bitacora.MarcarReintentoExitoso(entidad, recordId, fecha);
+                File.Delete(archivo);
+
+                Logger.Ok($"✅ Reintento exitoso para {archivo}");
+                Logger.Trace($"🔁 Reintentando para entidad '{entidad}', ID = {recordId}");
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"❌ Reintento fallido para {archivo}: {ex.Message}");
+            }
+        }
+
+        Logger.Info("🛑 Finalizado el proceso de reintentos.");
     }
 }

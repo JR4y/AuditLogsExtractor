@@ -27,7 +27,9 @@ public static class AuditHelper
         { 10, "Combinar" },
         { 11, "Actualizar estado" },
         { 12, "Asociar" },
-        { 13, "Desasociar" }
+        { 13, "Asignar" },
+        { 33, "Asociar" },
+        { 34, "Desasociar" }
     };
 
     public static string InterpretValue(IOrganizationService service, object value, string entityLogicalName, string fieldName)
@@ -142,8 +144,13 @@ public static class AuditHelper
 
     public static string GetAuditActionLabel(int? actionCode)
     {
-        if (!actionCode.HasValue) return "(sin acción)";
-        return AuditActionLabels.ContainsKey(actionCode.Value) ? AuditActionLabels[actionCode.Value] : "Acción desconocida (" + actionCode.Value + ")";
+        if (!actionCode.HasValue)
+            return "(sin acción)";
+
+        if (AuditActionLabels.TryGetValue(actionCode.Value, out var label))
+            return label;
+
+        return $"Acción desconocida ({actionCode.Value})";
     }
 
 }
