@@ -66,14 +66,18 @@ class Program
                 Logger.Info($"======== 📁 Procesando entidad: {entidad} ========");
 
                 List<Guid> recordIds = readerProd.ObtenerRecordIds(entidad, fechaCorte);
-                var total = recordIds.Count;
-                int procesados = 0, omitidos = 0, errores = 0;
-                var inicioEntidad = DateTime.Now;
 
-                var guidsProcesados = bitacora
-                    .ObtenerIdsPorEstado(entidad, "subido")
-                    .Concat(bitacora.ObtenerIdsPorEstado(entidad, "omitido"))
-                    .ToHashSet();
+                var guidsProcesados = bitacora.ObtenerIdsPorEstado(entidad, "subido").Concat(bitacora.ObtenerIdsPorEstado(entidad, "sin_auditoria")).ToHashSet();
+
+                //var total = recordIds.Count(id => !guidsProcesados.Contains(id));
+
+                int procesados = 0, errores = 0, sinAuditoria = 0, prevProcesados = 0;
+                var inicioEntidad = DateTime.Now;
+                prevProcesados = recordIds.Count(id => guidsProcesados.Contains(id));
+                // Obtiene los registros excluyendo los previamente procesados
+                recordIds = recordIds.Where(id => !guidsProcesados.Contains(id)).ToList();
+                var total = recordIds.Count;
+
 
                 try
                 {
@@ -88,18 +92,19 @@ class Program
 
                         try
                         {
-                            if (guidsProcesados.Contains(recordId))
+                            /*if (guidsProcesados.Contains(recordId))
                             {
-                                Interlocked.Increment(ref omitidos);
+                                Interlocked.Increment(ref prevProcesados);
                                 return;
-                            }
+                            }*/
 
                             DateTime? ultimaFecha = bitacora.GetUltimaFechaExportada(entidad, recordId);
                             List<Entity> registros = processor.ObtenerAuditoria(entidad, otc, recordId, fechaCorte);
 
                             if (registros == null || registros.Count == 0)
                             {
-                                Interlocked.Increment(ref omitidos);
+                                Interlocked.Increment(ref sinAuditoria);
+                                bitacora.MarkAsExported(entidad, recordId, fechaCorte, "sin_auditoria");
                                 return;
                             }
 
@@ -109,8 +114,8 @@ class Program
 
                             if (nuevos.Count == 0)
                             {
-                                Interlocked.Increment(ref omitidos);
-                                bitacora.MarkAsExported(entidad, recordId, fechaCorte, "omitido"); // 👈 esto falta
+                                Interlocked.Increment(ref sinAuditoria);
+                                bitacora.MarkAsExported(entidad, recordId, fechaCorte, "sin_auditoria");
                                 return;
                             }
 
@@ -136,14 +141,14 @@ class Program
                                 Interlocked.Increment(ref errores);
                             }
 
-                            var totalActual = procesados + omitidos + errores;
+                            var totalActual = procesados + sinAuditoria + errores + prevProcesados;
                             if (totalActual % 10 == 0)
                             {
                                 double avance = (double)totalActual / total * 100;
                                 lock (typeof(Logger))
                                 {
                                     Console.ForegroundColor = ConsoleColor.Cyan;
-                                    Console.Write($"\r[Progreso] {DateTime.Now:HH:mm:ss} > {entidad}: {avance:0.#}% ({totalActual}/{total})   ");
+                                    Console.Write($"\r[{DateTime.Now:HH:mm:ss}] {entidad}>> {avance:0.#}% ({totalActual}/{total})-[Act:{procesados} | Prev:{prevProcesados} | S/Audit:{sinAuditoria} | Err:{errores}]");
                                     Console.ResetColor();
                                 }
                             }
@@ -165,8 +170,7 @@ class Program
                 {
                     var dur = DateTime.Now - inicioEntidad;
                     string resHora = DateTime.Now.ToString("HH:mm:ss");
-                    Logger.Ok($"[{resHora}] ✅ Resumen {entidad} → Exportados: {procesados}, Omitidos: {omitidos}, Errores: {errores}, Tiempo: {dur:mm\\:ss}");
-
+                    Logger.Ok($"[{resHora}] ✅ Resumen {entidad} → Exportados: {procesados}, Sin auditoría: {sinAuditoria}, Previos: {prevProcesados}, Errores: {errores}, Tiempo: {dur:mm\\:ss}");
                     try
                     {
                         bitacora.GuardarResumenEjecucion(new ResumenEjecucion
@@ -174,7 +178,7 @@ class Program
                             FechaEjecucion = DateTime.Now,
                             Entidad = entidad,
                             Total = total,
-                            Omitidos = omitidos,
+                            Omitidos = sinAuditoria,
                             Exportados = procesados,
                             ConErrorSubida = errores,
                             Duracion = dur
