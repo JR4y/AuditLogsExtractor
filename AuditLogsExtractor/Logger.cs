@@ -3,11 +3,11 @@
 public static class Logger
 {
     private static readonly object _lock = new object();
-    public static void Info(string mensaje)
+    public static void Info(string mensaje, ConsoleColor color = ConsoleColor.Gray)
     {
         lock (_lock)
         {
-            Console.ForegroundColor = ConsoleColor.Gray;
+            Console.ForegroundColor = color;
             Console.WriteLine(string.Format("[{0:HH:mm:ss}] INFO: {1}", DateTime.Now, mensaje));
             Console.ResetColor();
         }

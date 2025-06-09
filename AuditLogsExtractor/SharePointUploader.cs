@@ -1,44 +1,59 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Configuration;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Text;
 using System.Xml;
 
-    public class SharePointUploader
-    {
-        private readonly string _siteUrl;
-        private readonly string _uploadFolder;
-        private readonly string _username;
-        private readonly string _password;
+public class SharePointUploader
+{
+    private readonly string _siteUrl;
+    private readonly string _uploadFolder;
+    private readonly string _username;
+    private readonly string _password;
+    private HashSet<string> _carpetasVerificadas = new HashSet<string>();
 
-        public SharePointUploader(string siteUrl, string libraryPath, string username, string password)
-        {
-            _siteUrl = siteUrl;
-            _uploadFolder = libraryPath;
-            _username = username;
-            _password = password;
+    private readonly object _folderLock = new object();
+    private readonly object _authLock = new object();
+    private CookieContainer _authCookies = null;
+    private DateTime _ultimaAutenticacion = DateTime.MinValue;
+    public SharePointUploader(string siteUrl, string libraryPath, string username, string password)
+    {
+        _siteUrl = siteUrl;
+        _uploadFolder = libraryPath;
+        _username = username;
+        _password = password;
     }
 
-        public void UploadFile(string localFilePath, string sharepointRelativePath)
+    public void SetCarpetasVerificadas(HashSet<string> carpetas)
+    {
+        _carpetasVerificadas = carpetas ?? new HashSet<string>();
+    }
+
+    public HashSet<string> GetCarpetasVerificadas()
+    {
+        lock (_folderLock)
         {
-            try
+            return new HashSet<string>(_carpetasVerificadas);
+        }
+    }
+
+    public void UploadFile(string localFilePath, string sharepointRelativePath)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(localFilePath) || !File.Exists(localFilePath))
             {
-                if (string.IsNullOrWhiteSpace(localFilePath) || !File.Exists(localFilePath))
-                {
-                    Console.WriteLine($"❌ Archivo local no encontrado: {localFilePath}");
-                    return;
-                }
+                Console.WriteLine($"❌ Archivo local no encontrado: {localFilePath}");
+                return;
+            }
 
             CookieContainer authCookies;
-            try
+            lock (_authLock)
             {
-                authCookies = GetAuthenticationCookies(_siteUrl, _username, _password);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"❌ Error en autenticación SAML: {ex.Message}");
-                throw; // Propaga para que sea gestionado arriba, donde ya tienes control por entidad
+                authCookies = GetOrRefreshCookies();
             }
 
             if (authCookies == null)
@@ -49,33 +64,48 @@ using System.Xml;
 
             // Crear estructura de carpetas en SharePoint
             string relativeFolder = Path.GetDirectoryName(sharepointRelativePath)?.Replace("\\", "/") ?? "";
-                if (!string.IsNullOrEmpty(relativeFolder))
-                {
-                    string[] folders = relativeFolder.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
-                    string currentFolder = _uploadFolder.TrimEnd('/');
+            if (!string.IsNullOrEmpty(relativeFolder))
+            {
+                string[] folders = relativeFolder.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+                string currentFolder = _uploadFolder.TrimEnd('/');
 
-                    foreach (var folder in folders)
+                foreach (var folder in folders)
+                {
+                    currentFolder += "/" + folder;
+
+                    string id = null;
+
+                    // Parte relativa real, sin incluir _uploadFolder
+                    string relativeToUpload = currentFolder.Replace(_uploadFolder.Trim('/'), "").Trim('/');
+
+                    var segments = relativeToUpload.Split('/');
+                    if (segments.Length >= 2)
                     {
-                        currentFolder += "/" + folder;
-                        EnsureSharePointFolder(_siteUrl, currentFolder, authCookies);
+                        string entidad = segments[segments.Length - 2];
+                        string prefijo = segments[segments.Length - 1];
+                        id = $"{entidad}|{prefijo}";
                     }
+
+                    EnsureSharePointFolder(_siteUrl, currentFolder, authCookies, id);
                 }
+            }
 
             // Subir archivo real
-                string uploadUrl = $"{_siteUrl.TrimEnd('/')}{(_uploadFolder.StartsWith("/") ? "" : "/")}{_uploadFolder.TrimEnd('/')}/{sharepointRelativePath.Replace("\\", "/")}";
-                byte[] fileBytes = File.ReadAllBytes(localFilePath);
+            string uploadUrl = $"{_siteUrl.TrimEnd('/')}{(_uploadFolder.StartsWith("/") ? "" : "/")}{_uploadFolder.TrimEnd('/')}/{sharepointRelativePath.Replace("\\", "/")}";
+            byte[] fileBytes = File.ReadAllBytes(localFilePath);
 
-                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(uploadUrl);
-                request.Method = "PUT";
-                request.ContentLength = fileBytes.Length;
-                request.CookieContainer = authCookies;
-                request.Headers.Add("Overwrite", "T");
-                request.Headers.Add("Translate", "f");
+            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(uploadUrl);
+            request.Method = "PUT";
+            request.ContentLength = fileBytes.Length;
+            request.CookieContainer = authCookies;
 
-                using (Stream requestStream = request.GetRequestStream())
-                {
-                    requestStream.Write(fileBytes, 0, fileBytes.Length);
-                }
+            request.Headers.Add("Overwrite", "T");
+            request.Headers.Add("Translate", "f");
+
+            using (Stream requestStream = request.GetRequestStream())
+            {
+                requestStream.Write(fileBytes, 0, fileBytes.Length);
+            }
 
             try
             {
@@ -91,56 +121,70 @@ using System.Xml;
             {
                 if (ex.Response is HttpWebResponse resp)
                 {
+                    Console.WriteLine($"⚠️ Fallo en subida de archivo. HTTP {resp.StatusCode} - {resp.StatusDescription}");
+
+                    if (resp.StatusCode == HttpStatusCode.Unauthorized || resp.StatusCode == HttpStatusCode.Forbidden)
+                    {
+                        Console.WriteLine("🔐 Posible cookie expirada o inválida");
+                    }
+
                     throw new Exception($"❌ Fallo en subida. Código HTTP: {resp.StatusCode}, Descripción: {resp.StatusDescription}", ex);
-                }
-                else
-                {
-                    throw new Exception("❌ Fallo desconocido al subir archivo (sin respuesta HTTP).", ex);
                 }
             }
         }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"❌ Error subiendo archivo: {ex.Message}");
-                throw; // <== esta línea es la que falta
+        catch (Exception ex)
+        {
+            //Console.WriteLine($"❌ Error subiendo archivo: {ex.Message}");
+            throw; // <== esta línea es la que falta
         }
     }
 
-        private void EnsureSharePointFolder(string siteUrl, string folderRelativeUrl, CookieContainer authCookies)
-        {
-            string folderUrl = $"{siteUrl.TrimEnd('/')}{(folderRelativeUrl.StartsWith("/") ? "" : "/")}{folderRelativeUrl.TrimEnd('/')}";
-            try
-            {
-                HttpWebRequest mkcolRequest = (HttpWebRequest)WebRequest.Create(folderUrl);
-                mkcolRequest.Method = "MKCOL";
-                mkcolRequest.CookieContainer = authCookies;
 
-                using (HttpWebResponse mkcolResponse = (HttpWebResponse)mkcolRequest.GetResponse())
-                {
-                    if (mkcolResponse.StatusCode == HttpStatusCode.Created || mkcolResponse.StatusCode == HttpStatusCode.MethodNotAllowed)
-                    {
-                        // 201 Created: carpeta creada; 405 MethodNotAllowed: ya existía
-                        //Console.WriteLine($"📁 Carpeta '{folderRelativeUrl}' verificada/creada.");
-                    }
-                    else
-                    {
-                        //Console.WriteLine($"⚠️ Respuesta inesperada al crear carpeta: {mkcolResponse.StatusCode}");
-                    }
-                }
-            }
-            catch (WebException ex)
+    private void EnsureSharePointFolder(string siteUrl, string folderRelativeUrl, CookieContainer authCookies, string carpetaId = null)
+    {
+        if (!string.IsNullOrEmpty(carpetaId))
+        {
+            lock (_folderLock)
             {
-                if (ex.Response is HttpWebResponse resp && resp.StatusCode == HttpStatusCode.MethodNotAllowed)
+                if (_carpetasVerificadas.Contains(carpetaId))
+                    return;
+
+                _carpetasVerificadas.Add(carpetaId);
+                //Logger.Trace($"📁 Carpeta verificada agregada: {carpetaId}");
+            }
+        }
+
+
+
+        string folderUrl = $"{siteUrl.TrimEnd('/')}{(folderRelativeUrl.StartsWith("/") ? "" : "/")}{folderRelativeUrl.TrimEnd('/')}";
+
+        try
+        {
+            HttpWebRequest mkcolRequest = (HttpWebRequest)WebRequest.Create(folderUrl);
+            mkcolRequest.Method = "MKCOL";
+            mkcolRequest.CookieContainer = authCookies;
+
+            using (HttpWebResponse mkcolResponse = (HttpWebResponse)mkcolRequest.GetResponse())
+            {
+                if (mkcolResponse.StatusCode != HttpStatusCode.Created &&
+                    mkcolResponse.StatusCode != HttpStatusCode.MethodNotAllowed)
                 {
-                    //Console.WriteLine($"📁 Carpeta '{folderRelativeUrl}' ya existía.");
-                }
-                else
-                {
-                    Console.WriteLine($"❌ Error creando carpeta '{folderRelativeUrl}': {ex.Message}");
-                    throw new Exception($"Error creando carpeta '{folderRelativeUrl}': {ex.Message}", ex);
+                    throw new Exception($"Respuesta inesperada al crear carpeta: {mkcolResponse.StatusCode}");
                 }
             }
         }
+        catch (WebException ex)
+        {
+            if (ex.Response is HttpWebResponse resp && resp.StatusCode == HttpStatusCode.MethodNotAllowed)
+            {
+                // Ya existe la carpeta
+            }
+            else
+            {
+                throw new Exception($"Error creando carpeta '{folderRelativeUrl}': {ex.Message}", ex);
+            }
+        }
+    }
 
     private CookieContainer GetAuthenticationCookies(string siteUrl, string username, string password)
     {
@@ -232,6 +276,67 @@ using System.Xml;
         catch (Exception ex)
         {
             throw new Exception("❌ Error inesperado en autenticación SAML.", ex);
+        }
+    }
+
+    private CookieContainer GetOrRefreshCookies()
+    {
+        lock (_authLock)
+        {
+            if (_authCookies != null && (DateTime.Now - _ultimaAutenticacion).TotalMinutes < 30)
+                return _authCookies;
+
+            _authCookies = GetAuthenticationCookies(_siteUrl, _username, _password);
+            _ultimaAutenticacion = DateTime.Now;
+            return _authCookies;
+        }
+    }
+
+    public void DownloadFile(string sharepointRelativePath, string localDestinationPath)
+    {
+        try
+        {
+            CookieContainer authCookies;
+            lock (_authLock)
+            {
+                authCookies = GetOrRefreshCookies();
+            }
+
+            if (authCookies == null)
+            {
+                Console.WriteLine("❌ No se obtuvieron cookies de autenticación.");
+                return;
+            }
+
+            string fileUrl = $"{_siteUrl.TrimEnd('/')}{(_uploadFolder.StartsWith("/") ? "" : "/")}{_uploadFolder.TrimEnd('/')}/{sharepointRelativePath.Replace("\\", "/")}";
+
+            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(fileUrl);
+            request.Method = "GET";
+            request.CookieContainer = authCookies;
+
+            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+            using (Stream responseStream = response.GetResponseStream())
+            using (FileStream fileStream = new FileStream(localDestinationPath, FileMode.Create, FileAccess.Write))
+            {
+                responseStream.CopyTo(fileStream);
+            }
+
+            //Console.WriteLine($"📥 Archivo descargado exitosamente: {localDestinationPath}");
+        }
+        catch (WebException ex)
+        {
+            if (ex.Response is HttpWebResponse resp && resp.StatusCode == HttpStatusCode.NotFound)
+            {
+                //Console.WriteLine($"⚠️ Archivo no encontrado en SharePoint: {sharepointRelativePath}");
+            }
+            else
+            {
+                //Console.WriteLine($"❌ Error al descargar archivo '{sharepointRelativePath}': {ex.Message}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Error inesperado en descarga de archivo '{sharepointRelativePath}': {ex.Message}");
         }
     }
 }
