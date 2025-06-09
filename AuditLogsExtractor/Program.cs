@@ -232,6 +232,7 @@ class Program
             catch (Exception ex)
             {
                 Logger.Error($"❌ Reintento fallido para {archivo}: {ex.Message}");
+                bitacora.MarkAsExported(entidad, recordId, fecha, "error_subida_reintento");
             }
         }
 

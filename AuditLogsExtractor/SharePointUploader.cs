@@ -137,6 +137,7 @@ using System.Xml;
                 else
                 {
                     Console.WriteLine($"❌ Error creando carpeta '{folderRelativeUrl}': {ex.Message}");
+                    throw new Exception($"Error creando carpeta '{folderRelativeUrl}': {ex.Message}", ex);
                 }
             }
         }
