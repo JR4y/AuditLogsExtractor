@@ -13,8 +13,6 @@ class Program
 {
     static void Main(string[] args)
     {
-        //Logger.Info("Iniciando extractor de auditoría...");
-
         try
         {
             string connDev = ConfigurationManager.AppSettings["D365_CONNECTION_DEV"];
@@ -25,8 +23,6 @@ class Program
             var readerProd = new DynamicsReader(connProd);
 
             int mesesConservar = int.Parse(config["meses_conservar"]);
-            //DateTime fechaCorte = DateTime.UtcNow.AddMonths(-mesesConservar);
-            //Logger.Info($"Iniciando extractor de auditoría (corte: {fechaCorte:yyyy-MM-dd})");
             DateTime fechaCorte = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1).AddMonths(-mesesConservar);
             Logger.Info($"Iniciando proceso de extracción  - (Anteriores a {fechaCorte.ToString("MMM yy", new System.Globalization.CultureInfo("es-ES"))})");
 
@@ -40,7 +36,6 @@ class Program
                 entidades.Add((logicalName, otc));
             }
 
-            //var bitacora = new BitacoraManager("bitacora.db");
             var processor = new AuditProcessor(readerProd.ObtenerServicio());
             var exporter = new CsvExporter(readerProd.ObtenerServicio());
             var uploader = new SharePointUploader(
@@ -94,7 +89,7 @@ class Program
                 {
                     Parallel.ForEach(recordIds, new ParallelOptions
                     {
-                        MaxDegreeOfParallelism = 5,
+                        MaxDegreeOfParallelism = 4,
                         CancellationToken = token
                     }, recordId =>
                     {
@@ -131,7 +126,7 @@ class Program
 
                             try
                             {
-                                uploader.UploadFile(archivo, rutaRelativa);
+                                uploader.UploadFile(archivo, rutaRelativa,entidad);
                                 bitacora.MarkAsExported(entidad, recordId, fechaCorte, "subido");
 
                                 if (File.Exists(archivo))
@@ -156,7 +151,7 @@ class Program
                                 lock (typeof(Logger))
                                 {
                                     Console.ForegroundColor = ConsoleColor.DarkCyan;
-                                    Console.Write($"\r[{DateTime.Now:HH:mm:ss}] {entidad} >> {avance:0.#}% ({totalActual}/{total})-[Act:{procesados} | Prev:{prevProcesados} | S/Audit:{sinAuditoria} | Err:{errores}   ]");
+                                    Console.Write($"\r[{DateTime.Now:HH:mm:ss}] {entidad} >> {avance:0.#}% ({totalActual}/{total}) - [ Act:{procesados} | Prev:{prevProcesados} | S/Audit:{sinAuditoria} | Err:{errores} ]");
                                     Console.ResetColor();
                                 }
                             }
@@ -233,7 +228,7 @@ class Program
                 string prefijo = recordId.ToString().Substring(0, 2);
                 string rutaRelativa = $"{entidad}/{prefijo}/{Path.GetFileName(archivo)}";
 
-                uploader.UploadFile(archivo, rutaRelativa);
+                uploader.UploadFile(archivo, rutaRelativa,entidad);
                 bitacora.MarcarReintentoExitoso(entidad, recordId, fecha);
                 File.Delete(archivo);
 

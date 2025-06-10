@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Text;
+using System.Threading;
 using System.Xml;
 
 public class SharePointUploader
@@ -19,6 +20,11 @@ public class SharePointUploader
     private readonly object _authLock = new object();
     private CookieContainer _authCookies = null;
     private DateTime _ultimaAutenticacion = DateTime.MinValue;
+
+    private const int MaxRetries = 5;
+    private const int InitialDelayMs = 1000; // 1 segundo
+    private const int MaxDelayMs = 10000;    // 10 segundos como tope
+
     public SharePointUploader(string siteUrl, string libraryPath, string username, string password)
     {
         _siteUrl = siteUrl;
@@ -40,7 +46,12 @@ public class SharePointUploader
         }
     }
 
-    public void UploadFile(string localFilePath, string sharepointRelativePath)
+    private bool EntidadTieneArbolCompleto(string entidad, HashSet<string> carpetas)
+    {
+        return carpetas.Count(c => c.StartsWith(entidad + "|", StringComparison.OrdinalIgnoreCase)) >= 256;
+    }
+
+    public void UploadFile(string localFilePath, string sharepointRelativePath, string entidad = null)
     {
         try
         {
@@ -67,26 +78,38 @@ public class SharePointUploader
             if (!string.IsNullOrEmpty(relativeFolder))
             {
                 string[] folders = relativeFolder.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
-                string currentFolder = _uploadFolder.TrimEnd('/');
 
-                foreach (var folder in folders)
+                // 🧠 Extraer entidad desde la ruta
+                //string entidad = folders.Length >= 2 ? folders[folders.Length - 2] : null;
+
+                // 🧱 Validar si la entidad ya tiene su árbol completo
+                if (!string.IsNullOrEmpty(entidad) && EntidadTieneArbolCompleto(entidad, _carpetasVerificadas))
                 {
-                    currentFolder += "/" + folder;
+                    //Console.WriteLine($"📁 Estructura completa detectada para entidad '{entidad}', se omite creación de carpetas.");
+                }
+                else
+                {
+                    string currentFolder = _uploadFolder.TrimEnd('/');
 
-                    string id = null;
-
-                    // Parte relativa real, sin incluir _uploadFolder
-                    string relativeToUpload = currentFolder.Replace(_uploadFolder.Trim('/'), "").Trim('/');
-
-                    var segments = relativeToUpload.Split('/');
-                    if (segments.Length >= 2)
+                    foreach (var folder in folders)
                     {
-                        string entidad = segments[segments.Length - 2];
-                        string prefijo = segments[segments.Length - 1];
-                        id = $"{entidad}|{prefijo}";
-                    }
+                        currentFolder += "/" + folder;
 
-                    EnsureSharePointFolder(_siteUrl, currentFolder, authCookies, id);
+                        string id = null;
+
+                        // Parte relativa real, sin incluir _uploadFolder
+                        string relativeToUpload = currentFolder.Replace(_uploadFolder.Trim('/'), "").Trim('/');
+
+                        var segments = relativeToUpload.Split('/');
+                        if (segments.Length >= 2)
+                        {
+                            string entidad2 = segments[segments.Length - 2];
+                            string prefijo = segments[segments.Length - 1];
+                            id = $"{entidad2}|{prefijo}";
+                        }
+
+                        EnsureSharePointFolder(_siteUrl, currentFolder, authCookies, id);
+                    }
                 }
             }
 
@@ -94,7 +117,63 @@ public class SharePointUploader
             string uploadUrl = $"{_siteUrl.TrimEnd('/')}{(_uploadFolder.StartsWith("/") ? "" : "/")}{_uploadFolder.TrimEnd('/')}/{sharepointRelativePath.Replace("\\", "/")}";
             byte[] fileBytes = File.ReadAllBytes(localFilePath);
 
-            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(uploadUrl);
+            int retryCount = 0;
+            int delayMs = InitialDelayMs;
+
+            while (true)
+            {
+                try
+                {
+                    HttpWebRequest request = (HttpWebRequest)WebRequest.Create(uploadUrl);
+                    request.Method = "PUT";
+                    request.ContentLength = fileBytes.Length;
+                    request.CookieContainer = authCookies;
+                    request.Headers.Add("Overwrite", "T");
+                    request.Headers.Add("Translate", "f");
+
+                    using (Stream requestStream = request.GetRequestStream())
+                    {
+                        requestStream.Write(fileBytes, 0, fileBytes.Length);
+                    }
+
+                    using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+                    {
+                        if (response.StatusCode != HttpStatusCode.Created && response.StatusCode != HttpStatusCode.OK)
+                        {
+                            throw new Exception($"Respuesta inesperada del servidor al subir archivo: {response.StatusCode}");
+                        }
+                    }
+
+                    break; // Éxito, salimos del while
+                }
+                catch (WebException ex) when (ex.Response is HttpWebResponse resp && (int)resp.StatusCode == 429)
+                {
+                    retryCount++;
+                    Console.WriteLine($"⚠️  SharePoint devolvió 429 (Too Many Requests). Reintentando ({retryCount}/{MaxRetries}) en {delayMs}ms...");
+
+                    if (retryCount > MaxRetries)
+                    {
+                        Console.WriteLine($"❌ Fallo tras {MaxRetries} reintentos por 429.");
+                        throw new Exception("Límite de reintentos alcanzado por error 429.", ex);
+                    }
+
+                    Thread.Sleep(delayMs);
+                    delayMs = Math.Min(delayMs * 2, MaxDelayMs); // backoff exponencial
+                }
+                catch (WebException ex) when (ex.Response is HttpWebResponse resp)
+                {
+                    Logger.Error($"Fallo en subida de archivo. HTTP {resp.StatusCode} - {resp.StatusDescription}");
+
+                    if (resp.StatusCode == HttpStatusCode.Unauthorized || resp.StatusCode == HttpStatusCode.Forbidden)
+                    {
+                        Console.WriteLine("🔐 Posible cookie expirada o inválida");
+                    }
+
+                    throw new Exception($"❌ Fallo en subida. Código HTTP: {resp.StatusCode}, Descripción: {resp.StatusDescription}", ex);
+                }
+            }
+
+            /*HttpWebRequest request = (HttpWebRequest)WebRequest.Create(uploadUrl);
             request.Method = "PUT";
             request.ContentLength = fileBytes.Length;
             request.CookieContainer = authCookies;
@@ -121,7 +200,8 @@ public class SharePointUploader
             {
                 if (ex.Response is HttpWebResponse resp)
                 {
-                    Console.WriteLine($"⚠️ Fallo en subida de archivo. HTTP {resp.StatusCode} - {resp.StatusDescription}");
+                    Console.WriteLine(); // fuerza salto desde el progreso                  
+                    Logger.Error($"Fallo en subida de archivo. HTTP {resp.StatusCode} - {resp.StatusDescription}");
 
                     if (resp.StatusCode == HttpStatusCode.Unauthorized || resp.StatusCode == HttpStatusCode.Forbidden)
                     {
@@ -130,7 +210,7 @@ public class SharePointUploader
 
                     throw new Exception($"❌ Fallo en subida. Código HTTP: {resp.StatusCode}, Descripción: {resp.StatusDescription}", ex);
                 }
-            }
+            }*/
         }
         catch (Exception ex)
         {
@@ -138,7 +218,6 @@ public class SharePointUploader
             throw; // <== esta línea es la que falta
         }
     }
-
 
     private void EnsureSharePointFolder(string siteUrl, string folderRelativeUrl, CookieContainer authCookies, string carpetaId = null)
     {
@@ -283,7 +362,7 @@ public class SharePointUploader
     {
         lock (_authLock)
         {
-            if (_authCookies != null && (DateTime.Now - _ultimaAutenticacion).TotalMinutes < 30)
+            if (_authCookies != null && (DateTime.Now - _ultimaAutenticacion).TotalMinutes < 15)
                 return _authCookies;
 
             _authCookies = GetAuthenticationCookies(_siteUrl, _username, _password);
