@@ -179,7 +179,7 @@ public class BitacoraManager : IDisposable
             {
                 uploader.UploadFile(backupName, backupRelativePath);
                 backupUploaded = true;
-                Logger.Info("📤 Bitácora y respaldo subidos a SharePoint.", ConsoleColor.Magenta);
+                //Logger.Info("📤 Bitácora y respaldo subidos a SharePoint.", ConsoleColor.Magenta);
             }
             else
             {

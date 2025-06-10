@@ -240,6 +240,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="AuditOrchestrator.cs" />
     <Compile Include="AuditProcessor.cs" />
     <Compile Include="BitacoraManager.cs" />
     <Compile Include="CsvExporter.cs" />
