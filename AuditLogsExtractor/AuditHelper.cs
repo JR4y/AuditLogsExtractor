@@ -3,38 +3,21 @@ using Microsoft.Xrm.Sdk.Messages;
 using Microsoft.Xrm.Sdk.Metadata;
 using System;
 using System.Collections.Generic;
-using System.IO;
-using System.Net;
-using System.Text;
-using System.Xml;
 
 public static class AuditHelper
 {
+    #region Caches
+
     private static readonly Dictionary<string, Dictionary<int, string>> OptionSetCache = new Dictionary<string, Dictionary<int, string>>();
     private static readonly Dictionary<string, Dictionary<string, string>> AttributeLabelCache = new Dictionary<string, Dictionary<string, string>>();
 
-    private static readonly Dictionary<int, string> AuditActionLabels = new Dictionary<int, string>
-    {
-        { 1, "Crear" },
-        { 2, "Actualizar" },
-        { 3, "Eliminar" },
-        { 4, "Activar" },
-        { 5, "Desactivar" },
-        { 6, "Asignar" },
-        { 7, "Compartir" },
-        { 8, "Reasignar" },
-        { 9, "Quitar compartición" },
-        { 10, "Combinar" },
-        { 11, "Actualizar estado" },
-        { 12, "Asociar" },
-        { 13, "Asignar" },
-        { 33, "Asociar" },
-        { 34, "Desasociar" }
-    };
+    #endregion
+
+    #region Public Methods
 
     public static string InterpretValue(IOrganizationService service, object value, string entityLogicalName, string fieldName)
     {
-        if (value == null) return "";
+        if (value == null) return string.Empty;
 
         if (value is OptionSetValue)
         {
@@ -60,7 +43,7 @@ public static class AuditHelper
         string cacheKey = entityLogicalName + "." + fieldName;
 
         if (OptionSetCache.ContainsKey(cacheKey) && OptionSetCache[cacheKey].ContainsKey(value))
-            return OptionSetCache[cacheKey][value] /*+ " (" + value + ")"*/;
+            return OptionSetCache[cacheKey][value];
 
         var options = new Dictionary<int, string>();
 
@@ -80,7 +63,9 @@ public static class AuditHelper
             {
                 foreach (var option in metadata.OptionSet.Options)
                 {
-                    options[option.Value.Value] = option.Label.UserLocalizedLabel?.Label ?? "(sin etiqueta)";
+                    options[option.Value.Value] = option.Label.UserLocalizedLabel != null
+                        ? option.Label.UserLocalizedLabel.Label
+                        : "(no label)";
                 }
             }
 
@@ -92,7 +77,9 @@ public static class AuditHelper
 
                 foreach (var option in globalMeta.Options)
                 {
-                    options[option.Value.Value] = option.Label.UserLocalizedLabel?.Label ?? "(sin etiqueta)";
+                    options[option.Value.Value] = option.Label.UserLocalizedLabel != null
+                        ? option.Label.UserLocalizedLabel.Label
+                        : "(no label)";
                 }
             }
         }
@@ -150,7 +137,29 @@ public static class AuditHelper
         if (AuditActionLabels.TryGetValue(actionCode.Value, out var label))
             return label;
 
-        return $"Acción desconocida ({actionCode.Value})";
+        return string.Format("Acción desconocida ({0})", actionCode.Value);
     }
 
+    #endregion
+
+    #region Internal Audit Labels
+
+    private static readonly Dictionary<int, string> AuditActionLabels = new Dictionary<int, string>
+    {
+        { 1, "Crear" },
+        { 2, "Actualizar" },
+        { 3, "Eliminar" },
+        { 4, "Activar" },
+        { 5, "Desactivar" },
+        { 6, "Asignar" },
+        { 7, "Compartir" },
+        { 8, "Reasignar" },
+        { 9, "Quitar compartición" },
+        { 10, "Combinar" },
+        { 11, "Actualizar estado" },
+        { 12, "Asociar" },
+        { 13, "Desasociar" }
+    };
+
+    #endregion
 }

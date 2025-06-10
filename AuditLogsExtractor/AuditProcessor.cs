@@ -8,51 +8,57 @@ public class AuditProcessor
 {
     private readonly IOrganizationService _service;
 
+    #region Constructor
+
     public AuditProcessor(IOrganizationService service)
     {
         _service = service;
     }
 
-    public Dictionary<Guid, List<Entity>> AgruparPorRegistroOrigen(IEnumerable<Entity> registrosAuditoria)
-    {
-        var resultado = new Dictionary<Guid, List<Entity>>();
+    #endregion
 
-        foreach (var record in registrosAuditoria)
+    #region Public Methods
+
+    public Dictionary<Guid, List<Entity>> GroupByOriginRecord(IEnumerable<Entity> auditRecords)
+    {
+        var result = new Dictionary<Guid, List<Entity>>();
+
+        foreach (var record in auditRecords)
         {
             if (!record.Attributes.Contains("objectid"))
                 continue;
 
-            var referencia = record.GetAttributeValue<EntityReference>("objectid");
-            if (referencia == null || referencia.Id == Guid.Empty)
+            var reference = record.GetAttributeValue<EntityReference>("objectid");
+            if (reference == null || reference.Id == Guid.Empty)
                 continue;
 
-            if (!resultado.ContainsKey(referencia.Id))
+            if (!result.ContainsKey(reference.Id))
             {
-                resultado[referencia.Id] = new List<Entity>();
+                result[reference.Id] = new List<Entity>();
             }
 
-            resultado[referencia.Id].Add(record);
+            result[reference.Id].Add(record);
         }
 
-        return resultado;
+        return result;
     }
 
-    public List<Entity> ObtenerAuditoria(string entidad, int objectTypeCode, Guid recordId, DateTime fechaCorte)
+    public List<Entity> GetAuditRecords(string entityName, int objectTypeCode, Guid recordId, DateTime cutoffDate)
     {
-        var auditorias = new List<Entity>();
+        var audits = new List<Entity>();
 
-        var req = new RetrieveRecordChangeHistoryRequest
+        var request = new RetrieveRecordChangeHistoryRequest
         {
-            Target = new EntityReference(entidad, recordId)
+            Target = new EntityReference(entityName, recordId)
         };
 
-        var resp = (RetrieveRecordChangeHistoryResponse)_service.Execute(req);
+        var response = (RetrieveRecordChangeHistoryResponse)_service.Execute(request);
 
-        foreach (var detail in resp.AuditDetailCollection.AuditDetails)
+        foreach (var detail in response.AuditDetailCollection.AuditDetails)
         {
             var audit = detail.AuditRecord;
             var createdOn = audit.GetAttributeValue<DateTime>("createdon");
-            if (createdOn >= fechaCorte)
+            if (createdOn >= cutoffDate)
                 continue;
 
             int actionCode = audit.Attributes.Contains("action") && audit["action"] is OptionSetValue opt
@@ -66,65 +72,39 @@ public class AuditProcessor
             {
                 foreach (var attr in attrDetail.NewValue.Attributes)
                 {
-                    var record = new Entity("audit")
+                    var auditEntity = new Entity("audit")
                     {
                         Id = audit.Id
                     };
 
-                    record["createdon"] = createdOn;
-                    record["action"] = new OptionSetValue(actionCode); // ✅ como OptionSetValue
-                    record["userid"] = new EntityReference("systemuser", userRef?.Id ?? Guid.Empty)
+                    auditEntity["createdon"] = createdOn;
+                    auditEntity["action"] = new OptionSetValue(actionCode);
+                    auditEntity["userid"] = new EntityReference("systemuser", userRef?.Id ?? Guid.Empty)
                     {
                         Name = userRef?.Name ?? string.Empty
                     };
-                    record["objectid"] = objRef;
-                    record["attributelogicalname"] = attr.Key;
+                    auditEntity["objectid"] = objRef;
+                    auditEntity["attributelogicalname"] = attr.Key;
 
                     object oldVal = attrDetail.OldValue != null && attrDetail.OldValue.Contains(attr.Key)
                         ? attrDetail.OldValue[attr.Key]
                         : null;
 
-                    record["oldvalue"] = oldVal;
-                    record["newvalue"] = attr.Value;
+                    auditEntity["oldvalue"] = oldVal;
+                    auditEntity["newvalue"] = attr.Value;
 
-                    auditorias.Add(record);
+                    audits.Add(auditEntity);
                 }
             }
-            else if (detail is RelationshipAuditDetail relDetail)
-            {
-                // 🔥 EXCLUIR asociaciones para mejorar legibilidad y rendimiento
-                continue;
-                var record = new Entity("audit")
-                {
-                    Id = audit.Id
-                };
-
-                string tipoRelacion = relDetail.RelationshipName ?? "(sin nombre)";
-                string idsAsociados = relDetail.TargetRecords != null
-                    ? string.Join(", ", relDetail.TargetRecords.Select(x => x.Id.ToString()))
-                    : "(vacío)";
-
-                string resumen = actionCode == 34
-                    ? $"Desasociados: {idsAsociados}"
-                    : $"Asociados: {idsAsociados}";
-
-                record["createdon"] = createdOn;
-                record["action"] = new OptionSetValue(actionCode); // ✅ como OptionSetValue
-                record["userid"] = new EntityReference("systemuser", userRef?.Id ?? Guid.Empty)
-                {
-                    Name = userRef?.Name ?? string.Empty
-                };
-                record["objectid"] = objRef;
-                record["attributelogicalname"] = tipoRelacion;
-                record["oldvalue"] = null;
-                record["newvalue"] = resumen;
-
-                auditorias.Add(record);
-            }
+            // Sección de RelationshipAuditDetail desactivada explícitamente
         }
 
-        return auditorias;
+        return audits;
     }
+
+    #endregion
+
+    #region Private Helpers
 
     private int InferRelationshipAction(AuditDetail detail)
     {
@@ -134,4 +114,6 @@ public class AuditProcessor
         }
         return -1;
     }
+
+    #endregion
 }

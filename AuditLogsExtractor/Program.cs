@@ -19,25 +19,25 @@ class Program
             string connProd = ConfigurationManager.AppSettings["D365_CONNECTION_PROD"];
 
             var readerDev = new DynamicsReader(connDev);
-            var config = readerDev.ObtenerParametrosDeConfiguracion();
+            var config = readerDev.GetConfigurationParameters();
             var readerProd = new DynamicsReader(connProd);
 
-            int mesesConservar = int.Parse(config["meses_conservar"]);
+            int mesesConservar = int.Parse(config["months_to_keep"]);
             DateTime fechaCorte = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1).AddMonths(-mesesConservar);
             Logger.Info($"Iniciando proceso de extracción  - (Anteriores a {fechaCorte.ToString("MMM yy", new System.Globalization.CultureInfo("es-ES"))})");
 
-            int totalEntidades = int.Parse(config["total_entidades"]);
+            int totalEntidades = int.Parse(config["total_entities"]);
             var entidades = new List<(string logicalName, int otc)>();
 
             for (int i = 1; i <= totalEntidades; i++)
             {
-                string logicalName = config[$"entidad_{i}_logicalname"];
-                int otc = int.Parse(config[$"entidad_{i}_otc"]);
+                string logicalName = config[$"entity_{i}_logicalname"];
+                int otc = int.Parse(config[$"entity_{i}_otc"]);
                 entidades.Add((logicalName, otc));
             }
 
-            var processor = new AuditProcessor(readerProd.ObtenerServicio());
-            var exporter = new CsvExporter(readerProd.ObtenerServicio());
+            var processor = new AuditProcessor(readerProd.GetService());
+            var exporter = new CsvExporter(readerProd.GetService());
             var uploader = new SharePointUploader(
                 config["sp_site"],
                 config["sp_upload_folder"],
@@ -45,10 +45,10 @@ class Program
                 config["sp_password"]);
 
             string nombreBackup;
-            var bitacora = BitacoraManager.DescargarOBitacora(uploader, out nombreBackup);
+            var bitacora = BitacoraManager.DownloadOrCreateBitacora(uploader, out nombreBackup);
             Logger.Info("Bitácora local lista. (descargada de SharePoint y respaldo creado)", ConsoleColor.Magenta);
 
-            var carpetasVerificadas = bitacora.ObtenerCarpetasVerificadas();
+            var carpetasVerificadas = bitacora.GetVerifiedFolders();
             uploader.SetCarpetasVerificadas(carpetasVerificadas);
 
             EjecutarReintentosFallidos(bitacora, uploader);
@@ -72,18 +72,17 @@ class Program
             {
                 Logger.Info($"======== 📁 Procesando entidad: {entidad} ========", ConsoleColor.Blue);
 
-                List<Guid> recordIds = readerProd.ObtenerRecordIds(entidad, fechaCorte);
+                List<Guid> recordIds = readerProd.GetRecordIds(entidad, fechaCorte);
+                var total = recordIds.Count;
+                var totalActual = 0;
 
-                var guidsProcesados = bitacora.ObtenerIdsPorEstado(entidad, "subido").Concat(bitacora.ObtenerIdsPorEstado(entidad, "sin_auditoria")).ToHashSet();
-
-                //var total = recordIds.Count(id => !guidsProcesados.Contains(id));
+                var guidsProcesados = bitacora.GetRecordIdsByStatus(entidad, "subido").Concat(bitacora.GetRecordIdsByStatus(entidad, "sin_auditoria")).ToHashSet();
 
                 int procesados = 0, errores = 0, sinAuditoria = 0, prevProcesados = 0;
                 var inicioEntidad = DateTime.Now;
                 prevProcesados = recordIds.Count(id => guidsProcesados.Contains(id));
                 // Obtiene los registros excluyendo los previamente procesados
                 recordIds = recordIds.Where(id => !guidsProcesados.Contains(id)).ToList();
-                var total = recordIds.Count;
 
                 try
                 {
@@ -98,8 +97,8 @@ class Program
 
                         try
                         {
-                            DateTime? ultimaFecha = bitacora.GetUltimaFechaExportada(entidad, recordId);
-                            List<Entity> registros = processor.ObtenerAuditoria(entidad, otc, recordId, fechaCorte);
+                            DateTime? ultimaFecha = bitacora.GetLastExportedDate(entidad, recordId);
+                            List<Entity> registros = processor.GetAuditRecords(entidad, otc, recordId, fechaCorte);
 
                             if (registros == null || registros.Count == 0)
                             {
@@ -119,7 +118,7 @@ class Program
                                 return;
                             }
 
-                            string archivo = exporter.ExportarGrupoComoCsv(entidad, recordId, nuevos);
+                            string archivo = exporter.ExportGroupAsCsv(entidad, recordId, nuevos);
                             string prefijo = recordId.ToString().Substring(0, 2);
                             string nombreArchivo = Path.GetFileName(archivo);
                             string rutaRelativa = $"{entidad}/{prefijo}/{nombreArchivo}";
@@ -144,7 +143,7 @@ class Program
                                 Interlocked.Increment(ref errores);
                             }
 
-                            var totalActual = procesados + sinAuditoria + errores + prevProcesados;
+                            totalActual = procesados + sinAuditoria + errores + prevProcesados;
                             if (totalActual % 10 == 0)
                             {
                                 double avance = (double)totalActual / total * 100;
@@ -173,22 +172,22 @@ class Program
                     var dur = DateTime.Now - inicioEntidad;
                     string resHora = DateTime.Now.ToString("HH:mm:ss");
                     Logger.Ok($"Resumen {entidad} - Exportados: {procesados}, Sin audit: {sinAuditoria}, Previos: {prevProcesados}, Errores: {errores}, Tiempo: {dur:mm\\:ss}");
-                    bitacora.GuardarCarpetasVerificadasDesde(uploader.GetCarpetasVerificadas());
+                    bitacora.SaveVerifiedFoldersFrom(uploader.GetCarpetasVerificadas());
                     try
                     {
-                        bitacora.GuardarResumenEjecucion(new ResumenEjecucion
+                        bitacora.SaveExecutionSummary(new ResumenEjecucion
                         {
                             FechaEjecucion = DateTime.Now,
                             Entidad = entidad,
-                            Total = total,
+                            Total = totalActual,
                             Omitidos = sinAuditoria,
                             Exportados = procesados,
                             ConErrorSubida = errores,
                             Duracion = dur.ToString(@"hh\:mm\:ss")
                         });
 
-                        bitacora.Cerrar(); // ← libera el archivo
-                        BitacoraManager.SubirBitacoraYBackup(uploader, nombreBackup);
+                        bitacora.Close(); // ← libera el archivo
+                        BitacoraManager.UploadBitacoraAndBackup(uploader, nombreBackup);
                     }
                     catch (Exception ex)
                     {
@@ -214,7 +213,7 @@ class Program
     {
         Logger.Info("♻️ Iniciando reintento de subidas fallidas...", ConsoleColor.DarkYellow);
 
-        foreach (var (entidad, recordId, fecha) in bitacora.ObtenerErroresSubida())
+        foreach (var (entidad, recordId, fecha) in bitacora.GetUploadErrors())
         {
             string archivo = $"output\\{recordId}.csv";
             if (!File.Exists(archivo))
@@ -229,11 +228,11 @@ class Program
                 string rutaRelativa = $"{entidad}/{prefijo}/{Path.GetFileName(archivo)}";
 
                 uploader.UploadFile(archivo, rutaRelativa,entidad);
-                bitacora.MarcarReintentoExitoso(entidad, recordId, fecha);
+                bitacora.MarkRetryAsSuccessful(entidad, recordId, fecha);
                 File.Delete(archivo);
 
                 //Logger.Ok($"✅ Reintento exitoso para {archivo}");
-                Logger.Trace($"🔁 Reintentando para entidad '{entidad}', ID = {recordId}");
+                Logger.Info($"🔁 Reintentando para entidad '{entidad}', ID = {recordId}",ConsoleColor.DarkGray);
             }
             catch (Exception ex)
             {

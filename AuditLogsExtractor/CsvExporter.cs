@@ -8,6 +8,8 @@ using Microsoft.Xrm.Sdk;
 
 public class CsvExporter
 {
+    #region Fields and Constructor
+
     private readonly IOrganizationService _service;
     public readonly string _outputFolder;
 
@@ -22,55 +24,75 @@ public class CsvExporter
         }
     }
 
-    public string ExportarGrupoComoCsv(string entidad, Guid registroId, List<Entity> auditoria)
-    {
-        string nombreArchivo = Path.Combine(_outputFolder, $"{registroId}.csv");
+    #endregion
 
-        var auditoriaOrdenada = auditoria
+    #region Public Methods
+
+    public string ExportGroupAsCsv(string entityLogicalName, Guid recordId, List<Entity> auditRecords)
+    {
+        // Validaciones Iniciales 👇
+        if (auditRecords == null || auditRecords.Count == 0)
+            return null;
+
+        if (recordId == Guid.Empty)
+            return null;
+
+        if (string.IsNullOrWhiteSpace(entityLogicalName))
+            return null;
+
+
+        string filePath = Path.Combine(_outputFolder, $"{recordId}.csv");
+        var orderedAudit = auditRecords
             .Where(r => r.Attributes.Contains("createdon"))
             .OrderBy(r => r.GetAttributeValue<DateTime>("createdon"))
             .ToList();
 
-        using (var writer = new StreamWriter(nombreArchivo, false, Encoding.UTF8))
+        using (var writer = new StreamWriter(filePath, false, Encoding.UTF8))
         {
             writer.WriteLine("AuditID,Fecha,Entidad,RegistroID,Usuario,Acción,Campo,Valor previo,Valor actual");
 
-            foreach (var record in auditoriaOrdenada)
+            foreach (var record in orderedAudit)
             {
                 string auditId = record.Id.ToString();
 
-                string fecha = record.Contains("createdon")
+                string createdOn = record.Contains("createdon")
                     ? ((DateTime)record["createdon"]).ToString("dd/MM/yyyy HH:mm:ss")
                     : "";
 
-                string accion = "";
+                string actionLabel = "";
                 if (record.Contains("action") && record["action"] is OptionSetValue actionOpt)
-                    accion = AuditHelper.GetAuditActionLabel(actionOpt.Value);
+                {
+                    actionLabel = AuditHelper.GetAuditActionLabel(actionOpt.Value);
+                }
 
-                string logicalName = record.Contains("attributelogicalname")
+                string logicalFieldName = record.Contains("attributelogicalname")
                     ? record["attributelogicalname"].ToString()
                     : "";
 
-                string campo = AuditHelper.GetDisplayName(_service, entidad, logicalName);
+                string fieldLabel = AuditHelper.GetDisplayName(_service, entityLogicalName, logicalFieldName);
 
-                string previo = record.Contains("oldvalue")
-                    ? AuditHelper.InterpretValue(_service, record["oldvalue"], entidad, logicalName)
+                string oldValue = record.Contains("oldvalue")
+                    ? AuditHelper.InterpretValue(_service, record["oldvalue"], entityLogicalName, logicalFieldName)
                     : "";
 
-                string nuevo = record.Contains("newvalue")
-                    ? AuditHelper.InterpretValue(_service, record["newvalue"], entidad, logicalName)
+                string newValue = record.Contains("newvalue")
+                    ? AuditHelper.InterpretValue(_service, record["newvalue"], entityLogicalName, logicalFieldName)
                     : "";
 
-                string usuario = record.Contains("userid") && record["userid"] is EntityReference er
+                string user = record.Contains("userid") && record["userid"] is EntityReference er
                     ? er.Name ?? ""
                     : "";
 
-                writer.WriteLine($"{auditId},{fecha},{entidad},{registroId},{Escape(usuario)},{accion},{campo},{Escape(previo)},{Escape(nuevo)}");
+                writer.WriteLine($"{auditId},{createdOn},{entityLogicalName},{recordId},{Escape(user)},{actionLabel},{fieldLabel},{Escape(oldValue)},{Escape(newValue)}");
             }
         }
 
-        return nombreArchivo;
+        return filePath;
     }
+
+    #endregion
+
+    #region Private Helpers
 
     private string Escape(string input)
     {
@@ -87,4 +109,6 @@ public class CsvExporter
 
         return input;
     }
+
+    #endregion
 }

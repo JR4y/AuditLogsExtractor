@@ -8,18 +8,24 @@ public class DynamicsReader
 {
     private readonly ServiceClient _client;
 
+    #region Constructor
+
     public DynamicsReader(string connectionString)
     {
         _client = new ServiceClient(connectionString);
         if (!_client.IsReady)
         {
-            throw new Exception("❌ No se pudo establecer conexión con Dynamics 365.");
+            throw new Exception("❌ Failed to connect to Dynamics 365.");
         }
     }
 
-    public Dictionary<string, string> ObtenerParametrosDeConfiguracion(string logicalName = "new_configuracion")
+    #endregion
+
+    #region Configuration Reading
+
+    public Dictionary<string, string> GetConfigurationParameters(string logicalName = "new_configuracion")
     {
-        var parametros = new Dictionary<string, string>();
+        var parameters = new Dictionary<string, string>();
 
         var query = new QueryExpression(logicalName)
         {
@@ -30,61 +36,63 @@ public class DynamicsReader
         EntityCollection results = _client.RetrieveMultiple(query);
         if (results.Entities.Count == 0)
         {
-            throw new Exception("⚠️ No se encontró ningún registro de configuración.");
+            throw new Exception("⚠️ No configuration record found.");
         }
 
         var config = results.Entities[0];
 
-        parametros["meses_conservar"] = config.GetAttributeValue<int?>("lyn_meses_conservar")?.ToString() ?? "0";
-        parametros["sp_site"] = config.GetAttributeValue<string>("lyn_sp_site") ?? string.Empty;
-        parametros["sp_upload_folder"] = config.GetAttributeValue<string>("lyn_sp_upload_folder") ?? string.Empty;
-        parametros["sp_user"] = config.GetAttributeValue<string>("lyn_sp_user") ?? string.Empty;
-        parametros["sp_password"] = config.GetAttributeValue<string>("lyn_sp_password") ?? string.Empty;
+        parameters["months_to_keep"] = config.GetAttributeValue<int?>("lyn_meses_conservar")?.ToString() ?? "0";
+        parameters["sp_site"] = config.GetAttributeValue<string>("lyn_sp_site") ?? string.Empty;
+        parameters["sp_upload_folder"] = config.GetAttributeValue<string>("lyn_sp_upload_folder") ?? string.Empty;
+        parameters["sp_user"] = config.GetAttributeValue<string>("lyn_sp_user") ?? string.Empty;
+        parameters["sp_password"] = config.GetAttributeValue<string>("lyn_sp_password") ?? string.Empty;
 
-        parametros["d365_clientid"] = config.GetAttributeValue<string>("lyn_d365_clientid") ?? string.Empty;
-        parametros["d365_clientsecret"] = config.GetAttributeValue<string>("lyn_d365_clientsecret") ?? string.Empty;
-        parametros["d365_tenantid"] = config.GetAttributeValue<string>("lyn_d365_tenantid") ?? string.Empty;
-        parametros["d365_orgurl"] = config.GetAttributeValue<string>("lyn_d365_orgurl") ?? string.Empty;
+        parameters["d365_clientid"] = config.GetAttributeValue<string>("lyn_d365_clientid") ?? string.Empty;
+        parameters["d365_clientsecret"] = config.GetAttributeValue<string>("lyn_d365_clientsecret") ?? string.Empty;
+        parameters["d365_tenantid"] = config.GetAttributeValue<string>("lyn_d365_tenantid") ?? string.Empty;
+        parameters["d365_orgurl"] = config.GetAttributeValue<string>("lyn_d365_orgurl") ?? string.Empty;
 
-        // Guardar el ID del registro de configuración
-        parametros["configuracion_id"] = config.Id.ToString();
+        parameters["configuration_id"] = config.Id.ToString();
 
-        // Consultar entidades auditadas relacionadas a este registro de configuración
-        var queryEntidades = new QueryExpression("lyn_entidad_auditadas")
+        var entityQuery = new QueryExpression("lyn_entidad_auditadas")
         {
             ColumnSet = new ColumnSet("lyn_logicalname", "lyn_objecttypecode", "lyn_habilitado"),
             Criteria = new FilterExpression
             {
                 Conditions =
-            {
-                new ConditionExpression("lyn_configuracion", ConditionOperator.Equal, config.Id),
-                new ConditionExpression("lyn_habilitado", ConditionOperator.Equal, true)
-            }
+                {
+                    new ConditionExpression("lyn_configuracion", ConditionOperator.Equal, config.Id),
+                    new ConditionExpression("lyn_habilitado", ConditionOperator.Equal, true)
+                }
             }
         };
 
-        var resultadoEntidades = _client.RetrieveMultiple(queryEntidades);
+        var entityResults = _client.RetrieveMultiple(entityQuery);
 
         int i = 1;
-        foreach (var entidad in resultadoEntidades.Entities)
+        foreach (var entity in entityResults.Entities)
         {
-            var ln = entidad.GetAttributeValue<string>("lyn_logicalname");
-            var objectTypeCode = entidad.GetAttributeValue<int>("lyn_objecttypecode");
+            var logicalNameValue = entity.GetAttributeValue<string>("lyn_logicalname");
+            var objectTypeCode = entity.GetAttributeValue<int>("lyn_objecttypecode");
 
             if (!string.IsNullOrEmpty(logicalName))
             {
-                parametros[$"entidad_{i}_logicalname"] = ln;
-                parametros[$"entidad_{i}_otc"] = objectTypeCode.ToString();
+                parameters[$"entity_{i}_logicalname"] = logicalNameValue;
+                parameters[$"entity_{i}_otc"] = objectTypeCode.ToString();
                 i++;
             }
         }
 
-        parametros["total_entidades"] = (i - 1).ToString();
+        parameters["total_entities"] = (i - 1).ToString();
 
-        return parametros;
+        return parameters;
     }
 
-    public List<Guid> ObtenerRecordIds(string entidad, DateTime fechaCorte)
+    #endregion
+
+    #region Record Query
+
+    public List<Guid> GetRecordIds(string entityLogicalName, DateTime cutoffDate)
     {
         var ids = new List<Guid>();
 
@@ -94,15 +102,15 @@ public class DynamicsReader
 
         while (moreRecords)
         {
-            var query = new QueryExpression(entidad)
+            var query = new QueryExpression(entityLogicalName)
             {
-                ColumnSet = new ColumnSet("createdon"), // o ColumnSet(false) si no necesitas nada
+                ColumnSet = new ColumnSet("createdon"),
                 Criteria = new FilterExpression
                 {
                     Conditions =
-                {
-                    new ConditionExpression("createdon", ConditionOperator.OnOrBefore, fechaCorte)
-                }
+                    {
+                        new ConditionExpression("createdon", ConditionOperator.OnOrBefore, cutoffDate)
+                    }
                 },
                 PageInfo = new PagingInfo
                 {
@@ -131,5 +139,11 @@ public class DynamicsReader
         return ids;
     }
 
-    public IOrganizationService ObtenerServicio() => _client;
+    #endregion
+
+    #region Service Accessor
+
+    public IOrganizationService GetService() => _client;
+
+    #endregion
 }

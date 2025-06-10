@@ -3,54 +3,63 @@
 public static class Logger
 {
     private static readonly object _lock = new object();
-    public static void Info(string mensaje, ConsoleColor color = ConsoleColor.Gray)
+
+    #region Info and Success
+
+    public static void Info(string message, ConsoleColor color = ConsoleColor.Gray)
     {
         lock (_lock)
         {
             Console.ForegroundColor = color;
-            Console.WriteLine(string.Format("[{0:HH:mm:ss}] INFO: {1}", DateTime.Now, mensaje));
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] INFO: {message}");
             Console.ResetColor();
         }
     }
 
-    public static void Ok(string mensaje)
+    public static void Ok(string message)
     {
         lock (_lock)
         {
             Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine(string.Format("[{0:HH:mm:ss}] ✅ {1}", DateTime.Now, mensaje));
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] ✅ {message}");
             Console.ResetColor();
         }
     }
 
-    public static void Warning(string mensaje)
+    #endregion
+
+    #region Warnings and Errors
+
+    public static void Warning(string message)
     {
         lock (_lock)
         {
             Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine(string.Format("[{0:HH:mm:ss}] ⚠️  {1}", DateTime.Now, mensaje));
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] ⚠️  {message}");
             Console.ResetColor();
         }
     }
 
-    public static void Error(string mensaje)
+    public static void Error(string message)
     {
         lock (_lock)
         {
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine(string.Format("[{0:HH:mm:ss}] ❌ {1}", DateTime.Now, mensaje));
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] ❌ {message}");
             Console.ResetColor();
         }
     }
 
-    public static void Trace(string message)
+    public static void ErrorWithStack(string message, Exception ex)
     {
-        Console.ForegroundColor = ConsoleColor.DarkGray;
-        Console.WriteLine($"      {message}");
-        Console.ResetColor();
+        lock (_lock)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] ❌ {message}: {ex.Message}");
+            Console.WriteLine(ex.StackTrace);
+            Console.ResetColor();
+        }
     }
 
-    public static void Header(string msg) => Info($"======== {msg} ========");
-    public static void Step(string msg) => Console.WriteLine($"   > {msg}");
-    public static void Summary(string msg) => Console.WriteLine($"📊 {msg}");
+    #endregion
 }

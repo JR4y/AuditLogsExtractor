@@ -6,14 +6,18 @@ using System.IO;
 
 public class BitacoraManager : IDisposable
 {
+    #region Constructor and Fields
     private readonly LiteDatabase _db;
     private readonly object _lock = new object();
+
     public BitacoraManager(string dbPath)
     {
         _db = new LiteDatabase(dbPath);
     }
+    #endregion
 
-    public DateTime? GetUltimaFechaExportada(string entityName, Guid guid)
+    #region Record State Management
+    public DateTime? GetLastExportedDate(string entityName, Guid guid)
     {
         lock (_lock)
         {
@@ -37,7 +41,7 @@ public class BitacoraManager : IDisposable
         }
     }
 
-    public string GetEstado(string entityName, Guid guid)
+    public string GetExportStatus(string entityName, Guid guid)
     {
         lock (_lock)
         {
@@ -47,7 +51,7 @@ public class BitacoraManager : IDisposable
         }
     }
 
-    public IEnumerable<(string Entidad, Guid RecordId, DateTime Fecha)> ObtenerErroresSubida()
+    public IEnumerable<(string Entidad, Guid RecordId, DateTime Fecha)> GetUploadErrors()
     {
         lock (_lock)
         {
@@ -66,24 +70,29 @@ public class BitacoraManager : IDisposable
         }
     }
 
-    public void MarcarReintentoExitoso(string entityName, Guid guid, DateTime fecha)
+    public void MarkRetryAsSuccessful(string entityName, Guid guid, DateTime fecha)
     {
         MarkAsExported(entityName, guid, fecha, "subido");
     }
 
-    private static string GetCollectionName(string entityName) => $"bitacora_{entityName}";
+    private static string GetCollectionName(string entityName)
+    {
+        return $"bitacora_{entityName}";
+    }
 
-    public IEnumerable<Guid> ObtenerIdsPorEstado(string entidad, string estado)
+    public IEnumerable<Guid> GetRecordIdsByStatus(string entityName, string estado)
     {
         lock (_lock)
         {
-            var col = _db.GetCollection<BitacoraItem>($"bitacora_{entidad}");
+            var col = _db.GetCollection<BitacoraItem>($"bitacora_{entityName}");
             foreach (var item in col.Find(x => x.Estado == estado))
                 yield return item.Id;
         }
     }
+    #endregion
 
-    public void GuardarResumenEjecucion(ResumenEjecucion resumen)
+    #region Execution Summary
+    public void SaveExecutionSummary(ResumenEjecucion resumen)
     {
         try
         {
@@ -99,19 +108,20 @@ public class BitacoraManager : IDisposable
         }
     }
 
-    public static BitacoraManager DescargarOBitacora(SharePointUploader uploader, out string nombreBackup, string carpetaBitacora = "BITACORA")
-    {
-        string nombreArchivo = "bitacora.db";
-        string rutaRelativa = $"{carpetaBitacora}/{nombreArchivo}";
-        bool descargado = false;
-        nombreBackup = null; // ✅ Asegura siempre inicialización
+    #endregion
 
-        // 1. Intentar descargar la bitácora desde SharePoint
+    #region Bitacora File Operations
+    public static BitacoraManager DownloadOrCreateBitacora(SharePointUploader uploader, out string backupName, string folder = "BITACORA")
+    {
+        string fileName = "bitacora.db";
+        string relativePath = $"{folder}/{fileName}";
+        bool downloaded = false;
+        backupName = null;
+
         try
         {
-            uploader.DownloadFile(rutaRelativa, nombreArchivo);
-            descargado = true;
-            //Logger.Info("📥 Bitácora descargada desde SharePoint.");
+            uploader.DownloadFile(relativePath, fileName);
+            downloaded = true;
         }
         catch (WebException ex)
         {
@@ -126,55 +136,49 @@ public class BitacoraManager : IDisposable
             }
         }
 
-        // 2. Si no se descargó y no existe localmente → crearla
-        if (!descargado && !File.Exists(nombreArchivo))
+        if (!downloaded && !File.Exists(fileName))
         {
             Logger.Warning("⚠️ Bitácora no encontrada localmente. Se creará nueva.");
-            new BitacoraManager(nombreArchivo).Dispose(); // crea vacía y libera
+            new BitacoraManager(fileName).Dispose();
         }
 
-        // 3. Si se descargó exitosamente → hacer copia local como respaldo
-        if (descargado)
+        if (downloaded)
         {
             try
             {
                 string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmm");
-                nombreBackup = $"bitacora_{timestamp}.db";
-                File.Copy(nombreArchivo, nombreBackup, true);
-                //Logger.Info($"🗂️ Backup local creado: {nombreBackup}");
+                backupName = $"bitacora_{timestamp}.db";
+                File.Copy(fileName, backupName, true);
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                //Logger.Warning($"⚠️ No se pudo generar backup local de la bitácora: {ex.Message}");
+                // Intencionalmente ignorado
             }
         }
 
-        // 4. Crear y retornar instancia principal
-        return new BitacoraManager(nombreArchivo);
+        return new BitacoraManager(fileName);
     }
 
-    public static void SubirBitacoraYBackup(SharePointUploader uploader, string nombreBackup, string carpetaBitacora = "BITACORA")
+    public static void UploadBitacoraAndBackup(SharePointUploader uploader, string backupName, string folder = "BITACORA")
     {
-        string nombreArchivo = "bitacora.db";
-        string rutaRelativa = $"{carpetaBitacora}/{nombreArchivo}";
-        string rutaBackupRelativa = !string.IsNullOrEmpty(nombreBackup)
-            ? $"{carpetaBitacora}/{nombreBackup}"
+        string fileName = "bitacora.db";
+        string relativePath = $"{folder}/{fileName}";
+        string backupRelativePath = !string.IsNullOrEmpty(backupName)
+            ? $"{folder}/{backupName}"
             : null;
 
-        bool subidaPrincipal = false;
-        bool subidaBackup = false;
+        bool mainUploaded = false;
+        bool backupUploaded = false;
 
         try
         {
-            // Subir archivo principal (bitácora actual)
-            uploader.UploadFile(nombreArchivo, rutaRelativa);
-            subidaPrincipal = true;
+            uploader.UploadFile(fileName, relativePath);
+            mainUploaded = true;
 
-            // Subir backup solo si se generó uno válido
-            if (!string.IsNullOrEmpty(rutaBackupRelativa) && File.Exists(nombreBackup))
+            if (!string.IsNullOrEmpty(backupRelativePath) && File.Exists(backupName))
             {
-                uploader.UploadFile(nombreBackup, rutaBackupRelativa);
-                subidaBackup = true;
+                uploader.UploadFile(backupName, backupRelativePath);
+                backupUploaded = true;
                 Logger.Info("📤 Bitácora y respaldo subidos a SharePoint.", ConsoleColor.Magenta);
             }
             else
@@ -187,12 +191,11 @@ public class BitacoraManager : IDisposable
             Logger.Error($"❌ Error subiendo bitácora o respaldo: {ex.Message}");
         }
 
-        if (subidaPrincipal && subidaBackup)
+        if (mainUploaded && backupUploaded)
         {
             try
             {
-                File.Delete(nombreBackup);
-                //Logger.Info($"🧹 Backup local eliminado: {nombreBackup}");
+                File.Delete(backupName);
             }
             catch (Exception ex)
             {
@@ -201,19 +204,21 @@ public class BitacoraManager : IDisposable
         }
     }
 
-    public void Cerrar()
+    public void Close()
     {
         try
         {
             _db?.Dispose();
-            //Logger.Trace("🗃️ Bitácora cerrada correctamente.");
         }
         catch (Exception ex)
         {
             Logger.Warning($"⚠️ Error al cerrar la bitácora: {ex.Message}");
         }
     }
-    public HashSet<string> ObtenerCarpetasVerificadas()
+    #endregion
+
+    #region Folder Verification
+    public HashSet<string> GetVerifiedFolders()
     {
         lock (_lock)
         {
@@ -228,36 +233,42 @@ public class BitacoraManager : IDisposable
             return hash;
         }
     }
-    public void GuardarCarpetasVerificadasDesde(HashSet<string> lista)
+
+    public void SaveVerifiedFoldersFrom(HashSet<string> list)
     {
         lock (_lock)
         {
             var col = _db.GetCollection<CarpetaVerificada>("carpetas_verificadas");
 
-            foreach (var id in lista)
+            foreach (var id in list)
             {
-                var partes = id.Split('|');
-                if (partes.Length != 2) continue;
+                var parts = id.Split('|');
+                if (parts.Length != 2) continue;
 
-                string entidad = partes[0];
-                string prefijo = partes[1];
+                string entity = parts[0];
+                string prefix = parts[1];
 
-                // Solo insertar si no existe en la base de datos
                 if (!col.Exists(x => x.Id == id))
                 {
                     col.Insert(new CarpetaVerificada
                     {
                         Id = id,
-                        Entidad = entidad,
-                        Prefijo = prefijo
+                        Entidad = entity,
+                        Prefijo = prefix
                     });
                 }
             }
         }
     }
-    public void Dispose() => _db?.Dispose();
+
+    public void Dispose()
+    {
+        _db?.Dispose();
+    }
+    #endregion
 }
 
+#region Data Models
 public class BitacoraItem
 {
     [BsonId]
@@ -265,7 +276,7 @@ public class BitacoraItem
 
     public DateTime UltimaFechaExportada { get; set; }
 
-    public string Estado { get; set; } // Ej: "subido", "omitido", "error_subida"
+    public string Estado { get; set; }
 }
 
 public class ResumenEjecucion
@@ -282,7 +293,8 @@ public class ResumenEjecucion
 
 public class CarpetaVerificada
 {
-    public string Id { get; set; } // entidad|prefijo
+    public string Id { get; set; }
     public string Entidad { get; set; }
     public string Prefijo { get; set; }
 }
+#endregion
