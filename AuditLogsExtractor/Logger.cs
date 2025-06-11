@@ -87,8 +87,20 @@ public static class Logger
     {
         if (_lineaProgresoActiva)
         {
-            Console.Write("\r" + new string(' ', Console.WindowWidth - 1) + "\r");
+            Console.Write("\r" + new string(' ', Console.WindowWidth) + "\r");
             _lineaProgresoActiva = false;
+        }
+    }
+
+    public static void FinalizarLineaProgreso()
+    {
+        lock (_lock)
+        {
+            if (_lineaProgresoActiva)
+            {
+                Console.WriteLine(); // Hace que el cursor baje a la siguiente línea
+                _lineaProgresoActiva = false;
+            }
         }
     }
 

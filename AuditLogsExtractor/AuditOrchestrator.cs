@@ -78,6 +78,7 @@ public class AuditOrchestrator
                     if (totalActual % 10 == 0)
                     {
                         Logger.Progreso(entidad, total, totalActual, procesados, prevProcesados, sinAuditoria, errores);
+                        //Logger.FinalizarLineaProgreso(); // ← limpia la línea de progreso y salta de línea
                     }
                 });
             }
