@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -42,7 +43,7 @@ public class AuditOrchestrator
     }
     #endregion
 
-    #region Proceso principal
+    #region Proceso principal Uno a Uno
     public void Ejecutar()
     {
         EjecutarReintentosFallidos();
@@ -242,5 +243,131 @@ public class AuditOrchestrator
 
         Logger.Info("🛑 Finalizado el proceso de reintentos.", ConsoleColor.DarkYellow);
     }
+    #endregion
+
+    #region Proceso principal ZIP
+
+    public void EjecutarZip()
+    {
+        //EjecutarReintentosFallidos(); // Si decides mantenerlo en modo ZIP
+
+        foreach (var (entidad, otc) in _entidades)
+        {
+            Logger.Info($"======== 📁 [ZIP] Procesando entidad: {entidad} ========", ConsoleColor.Cyan);
+
+            List<Guid> recordIds = _readerProd.GetRecordIds(entidad, _fechaCorte);
+            var guidsProcesados = _bitacora.GetRecordIdsByStatus(entidad, "subido")
+                .Concat(_bitacora.GetRecordIdsByStatus(entidad, "sin_auditoria"))
+                .ToHashSet();
+
+            var pendientes = recordIds.Where(id => !guidsProcesados.Contains(id)).ToList();
+            var gruposPorPrefijo = recordIds
+                .GroupBy(id => id.ToString("N").Substring(0, 2))
+                .OrderBy(g => g.Key)
+                .ToList();
+
+            int total = recordIds.Count;
+            int procesados = 0, errores = 0, sinAuditoria = 0, prevProcesados = recordIds.Count - total;
+            var inicioEntidad = DateTime.Now;
+
+            foreach (var grupo in gruposPorPrefijo)
+            {
+                string prefijo = grupo.Key;
+                Logger.Info($"→ Prefijo '{prefijo}' ({grupo.Count()} registros)");
+
+                foreach (var recordId in grupo)
+                {
+                    ProcesarRegistroSinSubida(entidad, otc, recordId, _fechaCorte, ref procesados, ref errores, ref sinAuditoria, _token);
+                }
+
+                ComprimirYSubirZip(entidad, prefijo); // ← esta función se define luego
+            }
+
+            var duracion = DateTime.Now - inicioEntidad;
+            int totalActual = procesados + sinAuditoria + errores + prevProcesados;
+            GuardarResumenEntidad(entidad, totalActual, sinAuditoria, procesados, errores, prevProcesados, duracion);
+        }
+
+        CerrarYSubirBitacora();
+    }
+
+    private void ProcesarRegistroSinSubida(string entidad,int otc,Guid recordId,DateTime fechaCorte,ref int procesados,ref int errores,ref int sinAuditoria,CancellationToken token)
+    {
+        if (token.IsCancellationRequested)
+            return;
+
+        try
+        {
+            DateTime? ultimaFecha = _bitacora.GetLastExportedDate(entidad, recordId);
+            List<Entity> registros = _processor.GetAuditRecords(entidad, otc, recordId, fechaCorte);
+
+            if (registros == null || registros.Count == 0)
+            {
+                Interlocked.Increment(ref sinAuditoria);
+                _bitacora.MarkAsExported(entidad, recordId, fechaCorte, "sin_auditoria");
+                return;
+            }
+
+            var nuevos = registros
+                .Where(r => !ultimaFecha.HasValue || r.GetAttributeValue<DateTime>("createdon") > ultimaFecha)
+                .ToList();
+
+            if (nuevos.Count == 0)
+            {
+                Interlocked.Increment(ref sinAuditoria);
+                _bitacora.MarkAsExported(entidad, recordId, fechaCorte, "sin_auditoria");
+                return;
+            }
+
+            string archivo = _exporter.ExportGroupAsCsv(entidad, recordId, nuevos);
+
+            // No se sube el archivo ni se elimina
+            _bitacora.MarkAsExported(entidad, recordId, fechaCorte, "exportado_no_subido");
+
+            Interlocked.Increment(ref procesados);
+        }
+        catch (Exception ex)
+        {
+            Interlocked.Increment(ref errores);
+            Logger.Error($"❌ Error al procesar [ZIP] {entidad} - {recordId}: {ex.Message}");
+        }
+    }
+
+    private void ComprimirYSubirZip(string entidad, string prefijo)
+    {
+        try
+        {
+            string carpetaOrigen = Path.Combine("output", entidad, prefijo);
+            if (!Directory.Exists(carpetaOrigen))
+            {
+                Logger.Warning($"⚠️ Carpeta de prefijo no encontrada: {carpetaOrigen}");
+                return;
+            }
+
+            string nombreZip = $"{prefijo}.zip";
+            string rutaZip = Path.Combine("output", entidad, nombreZip);
+
+            // Eliminar ZIP previo si existe
+            if (File.Exists(rutaZip))
+                File.Delete(rutaZip);
+
+            // Comprimir todos los archivos del prefijo
+            System.IO.Compression.ZipFile.CreateFromDirectory(carpetaOrigen, rutaZip);
+
+            string rutaRelativa = $"{entidad}/{prefijo}/{nombreZip}";
+            _uploader.UploadZipFile(rutaZip, rutaRelativa); // ← este método se implementa en SharePointUploader
+
+            // Si se sube correctamente, eliminar carpeta de CSVs y el ZIP temporal
+            Directory.Delete(carpetaOrigen, true);
+            File.Delete(rutaZip);
+
+            Logger.Ok($"📤 ZIP subido con éxito: {rutaRelativa}");
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"❌ Error al comprimir/subir ZIP para entidad '{entidad}', prefijo '{prefijo}': {ex.Message}");
+        }
+    }
+
     #endregion
 }

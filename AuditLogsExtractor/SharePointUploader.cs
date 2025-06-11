@@ -219,6 +219,128 @@ public class SharePointUploader
         }
     }
 
+    public void UploadZipFile(string zipPath, string sharepointRelativePath, string entidad = null)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(zipPath) || !File.Exists(zipPath))
+            {
+                Console.WriteLine($"❌ Archivo ZIP no encontrado: {zipPath}");
+                return;
+            }
+
+            CookieContainer authCookies;
+            lock (_authLock)
+            {
+                authCookies = GetOrRefreshCookies();
+            }
+
+            if (authCookies == null)
+            {
+                Console.WriteLine("❌ No se obtuvieron cookies de autenticación.");
+                return;
+            }
+
+            // Crear estructura de carpetas si aplica
+            string relativeFolder = Path.GetDirectoryName(sharepointRelativePath)?.Replace("\\", "/") ?? "";
+            if (!string.IsNullOrEmpty(relativeFolder))
+            {
+                string[] folders = relativeFolder.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+
+                if (!string.IsNullOrEmpty(entidad) && EntidadTieneArbolCompleto(entidad, _carpetasVerificadas))
+                {
+                    // ya verificada
+                }
+                else
+                {
+                    string currentFolder = _uploadFolder.TrimEnd('/');
+                    foreach (var folder in folders)
+                    {
+                        currentFolder += "/" + folder;
+
+                        string id = null;
+                        string relativeToUpload = currentFolder.Replace(_uploadFolder.Trim('/'), "").Trim('/');
+
+                        var segments = relativeToUpload.Split('/');
+                        if (segments.Length >= 2)
+                        {
+                            string entidad2 = segments[segments.Length - 2];
+                            string prefijo = segments[segments.Length - 1];
+                            id = $"{entidad2}|{prefijo}";
+                        }
+
+                        EnsureSharePointFolder(_siteUrl, currentFolder, authCookies, id);
+                    }
+                }
+            }
+
+            // Subida real del ZIP
+            string uploadUrl = $"{_siteUrl.TrimEnd('/')}{(_uploadFolder.StartsWith("/") ? "" : "/")}{_uploadFolder.TrimEnd('/')}/{sharepointRelativePath.Replace("\\", "/")}";
+            byte[] fileBytes = File.ReadAllBytes(zipPath);
+
+            int retryCount = 0;
+            int delayMs = InitialDelayMs;
+
+            while (true)
+            {
+                try
+                {
+                    HttpWebRequest request = (HttpWebRequest)WebRequest.Create(uploadUrl);
+                    request.Method = "PUT";
+                    request.ContentLength = fileBytes.Length;
+                    request.CookieContainer = authCookies;
+                    request.Headers.Add("Overwrite", "T");
+                    request.Headers.Add("Translate", "f");
+                    request.ContentType = "application/zip";
+
+                    using (Stream requestStream = request.GetRequestStream())
+                    {
+                        requestStream.Write(fileBytes, 0, fileBytes.Length);
+                    }
+
+                    using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+                    {
+                        if (response.StatusCode != HttpStatusCode.Created && response.StatusCode != HttpStatusCode.OK)
+                        {
+                            throw new Exception($"Respuesta inesperada al subir ZIP: {response.StatusCode}");
+                        }
+                    }
+
+                    break; // éxito
+                }
+                catch (WebException ex) when (ex.Response is HttpWebResponse resp && (int)resp.StatusCode == 429)
+                {
+                    retryCount++;
+                    Console.WriteLine($"⚠️  SharePoint 429 (Too Many Requests). Reintentando ({retryCount}/{MaxRetries}) en {delayMs}ms...");
+
+                    if (retryCount > MaxRetries)
+                    {
+                        Console.WriteLine($"❌ Fallo tras {MaxRetries} reintentos por 429.");
+                        throw new Exception("Límite de reintentos alcanzado por error 429.", ex);
+                    }
+
+                    Thread.Sleep(delayMs);
+                    delayMs = Math.Min(delayMs * 2, MaxDelayMs);
+                }
+                catch (WebException ex) when (ex.Response is HttpWebResponse resp)
+                {
+                    Logger.Error($"Fallo en subida de ZIP. HTTP {resp.StatusCode} - {resp.StatusDescription}");
+
+                    if (resp.StatusCode == HttpStatusCode.Unauthorized || resp.StatusCode == HttpStatusCode.Forbidden)
+                    {
+                        Console.WriteLine("🔐 Posible cookie expirada o inválida");
+                    }
+
+                    throw new Exception($"❌ Fallo en subida ZIP. Código HTTP: {resp.StatusCode}, Descripción: {resp.StatusDescription}", ex);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            throw;
+        }
+    }
+
     private void EnsureSharePointFolder(string siteUrl, string folderRelativeUrl, CookieContainer authCookies, string carpetaId = null)
     {
         if (!string.IsNullOrEmpty(carpetaId))

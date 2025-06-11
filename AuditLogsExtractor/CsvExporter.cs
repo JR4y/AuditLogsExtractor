@@ -12,16 +12,20 @@ public class CsvExporter
 
     private readonly IOrganizationService _service;
     public readonly string _outputFolder;
+    private readonly bool _usePrefixedFolder;
 
-    public CsvExporter(IOrganizationService service, string outputFolder = "output")
+    public CsvExporter(IOrganizationService service, string outputFolder = "output", bool usePrefixedFolder = false)
     {
         _service = service;
         _outputFolder = outputFolder;
+        _usePrefixedFolder = usePrefixedFolder;
 
         if (!Directory.Exists(_outputFolder))
         {
             Directory.CreateDirectory(_outputFolder);
         }
+
+        _usePrefixedFolder = usePrefixedFolder;
     }
 
     #endregion
@@ -41,7 +45,26 @@ public class CsvExporter
             return null;
 
 
-        string filePath = Path.Combine(_outputFolder, $"{recordId}.csv");
+        //string filePath = Path.Combine(_outputFolder, $"{recordId}.csv"); // Descomentar para usar una carpeta por registro
+
+        //LOGICA POR ZIP 👇
+        string fileName = $"{recordId}.csv";
+        string filePath;
+
+        if (_usePrefixedFolder)
+        {
+            string prefijo = recordId.ToString("N").Substring(0, 2);
+            string folderPath = Path.Combine(_outputFolder, entityLogicalName, prefijo);
+            Directory.CreateDirectory(folderPath);
+            filePath = Path.Combine(folderPath, fileName);
+        }
+        else
+        {
+            Directory.CreateDirectory(_outputFolder);
+            filePath = Path.Combine(_outputFolder, fileName);
+        }
+        //TERMINA LOGICA POR ZIP 👆  
+
         var orderedAudit = auditRecords
             .Where(r => r.Attributes.Contains("createdon"))
             .OrderBy(r => r.GetAttributeValue<DateTime>("createdon"))

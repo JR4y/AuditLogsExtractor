@@ -52,6 +52,9 @@ public class DynamicsReader
         parameters["d365_tenantid"] = config.GetAttributeValue<string>("lyn_d365_tenantid") ?? string.Empty;
         parameters["d365_orgurl"] = config.GetAttributeValue<string>("lyn_d365_orgurl") ?? string.Empty;
 
+        bool zipMode = config.GetAttributeValue<bool>("lyn_zip_uploadmode");
+        parameters["zip_upload_mode"] = zipMode ? "true" : "false";
+
         parameters["configuration_id"] = config.Id.ToString();
 
         var entityQuery = new QueryExpression("lyn_entidad_auditadas")

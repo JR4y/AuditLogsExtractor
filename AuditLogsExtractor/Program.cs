@@ -35,9 +35,13 @@ class Program
                 entidades.Add((logicalName, otc));
             }
 
+            //obtener parametro de zip
+            bool zipModeActivo = config["zip_upload_mode"].Equals("true", StringComparison.OrdinalIgnoreCase);
+
             // Inicializar componentes
             var processor = new AuditProcessor(readerProd.GetService());
-            var exporter = new CsvExporter(readerProd.GetService());
+            //var exporter = new CsvExporter(readerProd.GetService(), zipModeActivo);
+            var exporter = new CsvExporter(readerProd.GetService(), "output", zipModeActivo);
             var uploader = new SharePointUploader(
                 config["sp_site"],
                 config["sp_upload_folder"],
@@ -82,7 +86,17 @@ class Program
                 fechaCorte,
                 token);
 
-            orquestador.Ejecutar();
+            if (zipModeActivo)
+            {
+                Logger.Info("🛠️ Modo de ejecución ZIP activado.", ConsoleColor.Cyan);
+                orquestador.EjecutarZip();
+            }
+            else
+            {
+                orquestador.Ejecutar();
+            }
+
+            //orquestador.Ejecutar();
             Logger.Ok("Extracción de auditoría finalizada con éxito.");
         }
         catch (OperationCanceledException)
