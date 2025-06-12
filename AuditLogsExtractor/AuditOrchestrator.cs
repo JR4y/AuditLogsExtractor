@@ -246,8 +246,7 @@ public class AuditOrchestrator
     #endregion
 
     #region Proceso principal ZIP
-
-    public void EjecutarZip()
+    /*public void EjecutarZip()
     {
         //EjecutarReintentosFallidos(); // Si decides mantenerlo en modo ZIP
 
@@ -289,12 +288,75 @@ public class AuditOrchestrator
         }
 
         CerrarYSubirBitacora();
+    }*/
+
+    public void EjecutarZip()
+    {
+    var carpetasYaVerificadas = _bitacora.GetVerifiedFolders(); // ← clave para evitar reprocesar
+    foreach (var (entidad, otc) in _entidades)
+    {
+        Logger.Info($"======== 📁 [ZIP] Procesando entidad: {entidad} ========", ConsoleColor.Cyan);
+
+        List<Guid> recordIds = _readerProd.GetRecordIds(entidad, _fechaCorte);
+        var guidsProcesados = _bitacora.GetRecordIdsByStatus(entidad, "subido")
+            .Concat(_bitacora.GetRecordIdsByStatus(entidad, "sin_auditoria"))
+            .ToHashSet();
+
+        var pendientes = recordIds.Where(id => !guidsProcesados.Contains(id)).ToList();
+
+        // Agrupar por prefijo (00, 01, ..., FF)
+        var gruposPorPrefijo = pendientes
+            .GroupBy(id => id.ToString("N").Substring(0, 2))
+            .OrderBy(g => g.Key)
+            .ToList();
+
+        int total = recordIds.Count;
+        int procesados = 0, errores = 0, sinAuditoria = 0;
+        int prevProcesados = recordIds.Count - pendientes.Count;
+        var inicioEntidad = DateTime.Now;
+
+        foreach (var grupo in gruposPorPrefijo)
+        {
+            if (_token.IsCancellationRequested)
+            {
+                Logger.Warning("⏸️ Pausa detectada. Finalizando ejecución al terminar prefijo actual.");
+                break;
+            }
+
+            string prefijo = grupo.Key;
+
+            // Saltar si ya está marcado como verificado
+            string keyVerificacion = $"{entidad}|{prefijo}";
+            if (carpetasYaVerificadas.Contains(keyVerificacion))
+            {
+                Logger.Info($"⏩ Prefijo '{prefijo}' ya procesado previamente, se omite.");
+                continue;
+            }
+
+            Logger.Info($"→ Prefijo '{prefijo}' ({grupo.Count()} registros)");
+
+            foreach (var recordId in grupo)
+            {
+                ProcesarRegistroSinSubida(entidad, otc, recordId, _fechaCorte, ref procesados, ref errores, ref sinAuditoria, _token);
+            }
+
+            ComprimirYSubirZip(entidad, prefijo);
+
+            // Marcar el prefijo como verificado
+            _bitacora.MarcarCarpetaVerificada(entidad, prefijo);
+        }
+
+        var duracion = DateTime.Now - inicioEntidad;
+        int totalActual = procesados + sinAuditoria + errores + prevProcesados;
+        GuardarResumenEntidad(entidad, totalActual, sinAuditoria, procesados, errores, prevProcesados, duracion);
     }
 
+    CerrarYSubirBitacora();
+}
     private void ProcesarRegistroSinSubida(string entidad,int otc,Guid recordId,DateTime fechaCorte,ref int procesados,ref int errores,ref int sinAuditoria,CancellationToken token)
     {
-        if (token.IsCancellationRequested)
-            return;
+        /*if (token.IsCancellationRequested)
+            return;*/
 
         try
         {
@@ -344,30 +406,81 @@ public class AuditOrchestrator
                 return;
             }
 
-            string nombreZip = $"{prefijo}.zip";
-            string rutaZip = Path.Combine("output", entidad, nombreZip);
+            var archivosCsv = Directory.GetFiles(carpetaOrigen, "*.csv").ToList();
+            if (archivosCsv.Count == 0)
+            {
+                Logger.Warning($"⚠️ No hay archivos CSV para comprimir en '{carpetaOrigen}'");
+                return;
+            }
 
-            // Eliminar ZIP previo si existe
-            if (File.Exists(rutaZip))
-                File.Delete(rutaZip);
+            int loteSize = 100;
+            int totalZips = (int)Math.Ceiling(archivosCsv.Count / (double)loteSize);
+            bool fallo = false;
 
-            // Comprimir todos los archivos del prefijo
-            System.IO.Compression.ZipFile.CreateFromDirectory(carpetaOrigen, rutaZip);
+            for (int i = 0; i < totalZips; i++)
+            {
+                string tempFolder = Path.Combine("temp_zip", entidad, prefijo);
+                Directory.CreateDirectory(tempFolder);
 
-            string rutaRelativa = $"{entidad}/{prefijo}/{nombreZip}";
-            _uploader.UploadZipFile(rutaZip, rutaRelativa); // ← este método se implementa en SharePointUploader
+                var archivosDelLote = archivosCsv.Skip(i * loteSize).Take(loteSize).ToList();
+                List<Guid> guidsDelLote = new List<Guid>();
 
-            // Si se sube correctamente, eliminar carpeta de CSVs y el ZIP temporal
-            Directory.Delete(carpetaOrigen, true);
-            File.Delete(rutaZip);
+                foreach (var archivo in archivosDelLote)
+                {
+                    string destino = Path.Combine(tempFolder, Path.GetFileName(archivo));
+                    File.Copy(archivo, destino, true);
 
-            Logger.Ok($"📤 ZIP subido con éxito: {rutaRelativa}");
+                    // Extraer el recordId desde el nombre del archivo
+                    string nombre = Path.GetFileNameWithoutExtension(archivo);
+                    if (Guid.TryParse(nombre, out Guid id))
+                        guidsDelLote.Add(id);
+                }
+
+                string sufijoZip = totalZips == 1 ? "" : $"_part{i + 1}";
+                string nombreZip = $"{prefijo}{sufijoZip}.zip";
+                string rutaZip = Path.Combine("output", entidad, nombreZip);
+
+                if (File.Exists(rutaZip))
+                    File.Delete(rutaZip);
+
+                System.IO.Compression.ZipFile.CreateFromDirectory(tempFolder, rutaZip);
+                string rutaRelativa = $"{entidad}/{prefijo}/{nombreZip}";
+
+                try
+                {
+                    _uploader.UploadZipFile(rutaZip, rutaRelativa);
+                    File.Delete(rutaZip);
+
+                    // ✅ Marcar en bitácora como subido
+                    foreach (var id in guidsDelLote)
+                    {
+                        _bitacora.MarkAsExported(entidad, id, _fechaCorte, "subido");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error($"❌ Error subiendo ZIP {nombreZip}: {ex.Message}");
+                    fallo = true;
+                    break;
+                }
+
+                Directory.Delete(tempFolder, true);
+            }
+
+            if (!fallo)
+            {
+                Directory.Delete(carpetaOrigen, true);
+                Logger.Ok($"📤 ZIPs subidos y bitácora actualizada para prefijo '{prefijo}'");
+            }
+            else
+            {
+                Logger.Warning($"⚠️ Subida incompleta, se conservan archivos y bitácora parcial para prefijo '{prefijo}'");
+            }
         }
         catch (Exception ex)
         {
-            Logger.Error($"❌ Error al comprimir/subir ZIP para entidad '{entidad}', prefijo '{prefijo}': {ex.Message}");
+            Logger.Error($"❌ Error en proceso de ZIP por partes para entidad '{entidad}', prefijo '{prefijo}': {ex.Message}");
         }
     }
-
     #endregion
 }

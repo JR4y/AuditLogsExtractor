@@ -1,4 +1,5 @@
-﻿using Microsoft.Xrm.Sdk;
+﻿using LiteDB;
+using Microsoft.Xrm.Sdk;
 using System;
 using System.Collections.Generic;
 using System.Configuration;
@@ -26,8 +27,8 @@ class Program
             Logger.Info($"Iniciando proceso de extracción - (Anteriores a {fechaCorte:MMM yy})");
 
             // Cargar entidades desde configuración
-            int totalEntidades = int.Parse(config["total_entities"]);
             var entidades = new List<(string logicalName, int otc)>();
+            int totalEntidades = int.Parse(config["total_entities"]);
             for (int i = 1; i <= totalEntidades; i++)
             {
                 string logicalName = config[$"entity_{i}_logicalname"];

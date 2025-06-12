@@ -261,6 +261,25 @@ public class BitacoraManager : IDisposable
         }
     }
 
+    public void MarcarCarpetaVerificada(string entidad, string prefijo)
+    {
+        lock (_lock)
+        {
+            var col = _db.GetCollection<CarpetaVerificada>("carpetas_verificadas");
+            string id = $"{entidad}|{prefijo}";
+
+            if (!col.Exists(x => x.Id == id))
+            {
+                col.Insert(new CarpetaVerificada
+                {
+                    Id = id,
+                    Entidad = entidad,
+                    Prefijo = prefijo
+                });
+            }
+        }
+    }
+
     public void Dispose()
     {
         _db?.Dispose();
