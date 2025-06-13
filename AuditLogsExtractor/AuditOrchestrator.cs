@@ -22,6 +22,7 @@ namespace AuditLogsExtractor
         private readonly DateTime _fechaCorte;
         private readonly CancellationToken _token;
         private static int _bitacoraSubidaFlag = 0;
+        private readonly Action<EstadoEntidadActual> _estadoCallback;
         public AuditOrchestrator(
             DynamicsReader readerProd,
             AuditProcessor processor,
@@ -31,7 +32,8 @@ namespace AuditLogsExtractor
             string backupName,
             List<(string logicalName, int otc)> entidades,
             DateTime fechaCorte,
-            CancellationToken token)
+            CancellationToken token,
+            Action<EstadoEntidadActual> estadoCallback)
         {
             _readerProd = readerProd;
             _processor = processor;
@@ -42,6 +44,7 @@ namespace AuditLogsExtractor
             _entidades = entidades;
             _fechaCorte = fechaCorte;
             _token = token;
+            _estadoCallback = estadoCallback;
         }
         #endregion
 
@@ -52,7 +55,7 @@ namespace AuditLogsExtractor
 
             foreach (var (entidad, otc) in _entidades)
             {
-                Logger.Log($"======== 📁 Procesando entidad: {entidad} ========","", ConsoleColor.Blue);
+                Logger.Log($"======== 📁 Procesando entidad: {entidad} ========", "", ConsoleColor.Blue);
 
                 List<string> recordIds = _readerProd.GetRecordIds(entidad, _fechaCorte);
                 var total = recordIds.Count;
@@ -80,14 +83,31 @@ namespace AuditLogsExtractor
                         totalActual = procesados + sinAuditoria + errores + prevProcesados;
                         if (totalActual % 10 == 0)
                         {
-                            Logger.Progreso(entidad, total, totalActual, procesados, prevProcesados, sinAuditoria, errores);
+
+                            // NUEVO: actualizamos UI
+                            //_progresoCallback?.Invoke(entidad, total, totalActual);
+                            //Logger.Progreso(entidad, total, totalActual, procesados, prevProcesados, sinAuditoria, errores);
                             //Logger.FinalizarLineaProgreso(); // ← limpia la línea de progreso y salta de línea
+
+                            var estado = new EstadoEntidadActual
+                            {
+                                Entidad = entidad,
+                                Total = total,
+                                Actual = totalActual,
+                                Exportados = procesados,
+                                SinAuditoria = sinAuditoria,
+                                Previos = prevProcesados,
+                                Errores = errores,
+                                Duracion = DateTime.Now - inicioEntidad
+                            };
+
+                            _estadoCallback?.Invoke(estado);
                         }
                     });
                 }
                 catch (OperationCanceledException)
                 {
-                    Logger.Log("Proceso pausado. Puede reanudarse sin pérdida de información.","WARN");
+                    Logger.Log("Proceso pausado. Puede reanudarse sin pérdida de información.", "WARN");
                     break; // Sal del foreach de entidades directamente;
                 }
                 finally
@@ -156,7 +176,7 @@ namespace AuditLogsExtractor
                 }
                 catch (Exception)
                 {
-                    Logger.Log($"Error al subir/eliminar archivo {archivo}","ERROR");
+                    Logger.Log($"Error al subir/eliminar archivo {archivo}", "ERROR");
                     _bitacora.MarkAsExported(entidad, recordId, fechaCorte, "error_subida");
                     Interlocked.Increment(ref errores);
                 }
@@ -173,7 +193,6 @@ namespace AuditLogsExtractor
         private void GuardarResumenEntidad(string entidad, int totalActual, int sinAuditoria, int procesados, int errores, int prevProcesados, TimeSpan duracion)
         {
             Logger.Log($"Resumen {entidad} - Exportados: {procesados}, Sin audit: {sinAuditoria}, Previos: {prevProcesados}, Errores: {errores}, Tiempo: {duracion:mm\\:ss}","OK");
-
             try
             {
                 _bitacora.SaveExecutionSummary(new ResumenEjecucion
@@ -199,10 +218,10 @@ namespace AuditLogsExtractor
 
             try
             {
-                _bitacora.SaveVerifiedFoldersFrom(_uploader.GetCarpetasVerificadas());
+                _bitacora.SaveVerifiedFoldersFrom(_uploader.GetVerifiedFolders());
                 _bitacora.Close();
                 BitacoraManager.UploadBitacoraAndBackup(_uploader, _backupName);
-                Logger.Log("📤 Bitácora y respaldo subidos a SharePoint.","", ConsoleColor.Magenta);
+                Logger.Log("📤 Bitácora y respaldo subidos a SharePoint.", "", ConsoleColor.Magenta);
             }
             catch (Exception ex)
             {
@@ -214,7 +233,7 @@ namespace AuditLogsExtractor
         #region Reintentos
         private void EjecutarReintentosFallidos()
         {
-            Logger.Log("Iniciando reintento de subidas fallidas...","", ConsoleColor.DarkYellow);
+            Logger.Log("Iniciando reintento de subidas fallidas...", "", ConsoleColor.DarkYellow);
 
             foreach (var (entidad, recordId, fecha) in _bitacora.GetUploadErrors())
             {
@@ -238,12 +257,12 @@ namespace AuditLogsExtractor
                 }
                 catch (Exception ex)
                 {
-                    Logger.Log($"❌ Reintento fallido para {archivo}: {ex.Message}","ERROR");
+                    Logger.Log($"❌ Reintento fallido para {archivo}: {ex.Message}", "ERROR");
                     _bitacora.MarkAsExported(entidad, recordId, fecha, "error_subida_reintento");
                 }
             }
 
-            Logger.Log("Finalizado el proceso de reintentos.","INFO",ConsoleColor.DarkYellow);
+            Logger.Log("Finalizado el proceso de reintentos.", "INFO", ConsoleColor.DarkYellow);
         }
         #endregion
 
@@ -253,7 +272,7 @@ namespace AuditLogsExtractor
             var carpetasYaVerificadas = _bitacora.GetVerifiedFolders(); // ← clave para evitar reprocesar
             foreach (var (entidad, otc) in _entidades)
             {
-                Logger.Log($"======== 📁 [ZIP] Procesando entidad: {entidad} ========","", ConsoleColor.Cyan);
+                Logger.Log($"======== 📁 [ZIP] Procesando entidad: {entidad} ========", "", ConsoleColor.Cyan);
 
                 List<string> recordIds = _readerProd.GetRecordIds(entidad, _fechaCorte);
                 var guidsProcesados = _bitacora.GetRecordIdsByStatus(entidad, "subido")
@@ -349,7 +368,7 @@ namespace AuditLogsExtractor
             catch (Exception ex)
             {
                 Interlocked.Increment(ref errores);
-                Logger.Log($"Error al procesar [ZIP] {entidad} - {recordId}: {ex.Message}","ERROR");
+                Logger.Log($"Error al procesar [ZIP] {entidad} - {recordId}: {ex.Message}", "ERROR");
             }
         }
 
@@ -360,14 +379,14 @@ namespace AuditLogsExtractor
                 string carpetaOrigen = Path.Combine("output", entidad, prefijo);
                 if (!Directory.Exists(carpetaOrigen))
                 {
-                    Logger.Log($"Carpeta de prefijo no encontrada: {carpetaOrigen}","WARN");
+                    Logger.Log($"Carpeta de prefijo no encontrada: {carpetaOrigen}", "WARN");
                     return;
                 }
 
                 var archivosCsv = Directory.GetFiles(carpetaOrigen, "*.csv").ToList();
                 if (archivosCsv.Count == 0)
                 {
-                    Logger.Log($"No hay archivos CSV para comprimir en '{carpetaOrigen}'","WARN");
+                    Logger.Log($"No hay archivos CSV para comprimir en '{carpetaOrigen}'", "WARN");
                     return;
                 }
 
@@ -427,11 +446,11 @@ namespace AuditLogsExtractor
                 if (!fallo)
                 {
                     Directory.Delete(carpetaOrigen, true);
-                    Logger.Log($"ZIPs subidos y bitácora actualizada para prefijo '{prefijo}'","OK");
+                    Logger.Log($"ZIPs subidos y bitácora actualizada para prefijo '{prefijo}'", "OK");
                 }
                 else
                 {
-                    Logger.Log($"Subida incompleta, se conservan archivos y bitácora parcial para prefijo '{prefijo}'","WARN");
+                    Logger.Log($"Subida incompleta, se conservan archivos y bitácora parcial para prefijo '{prefijo}'", "WARN");
                 }
             }
             catch (Exception ex)
@@ -440,5 +459,20 @@ namespace AuditLogsExtractor
             }
         }
         #endregion
+
+        #region Modelo de Estado Actual
+        public class EstadoEntidadActual
+        {
+            public string Entidad { get; set; }
+            public int Total { get; set; }
+            public int Actual { get; set; }
+            public int Exportados { get; set; }
+            public int SinAuditoria { get; set; }
+            public int Previos { get; set; }
+            public int Errores { get; set; }
+            public TimeSpan Duracion { get; set; }
+        }
+        #endregion
+
     }
 }

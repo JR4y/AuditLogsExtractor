@@ -8,10 +8,14 @@ namespace AuditLogsExtractor
 {
     public class AuditRunner
     {
-        public void Ejecutar(CancellationToken token, Action<string> logCallback = null)
+        private Action<string, string, string> _cabeceraCallback;
+
+        public void Ejecutar(CancellationToken token, Action<string> logCallback = null, Action<string, string, string> cabeceraCallback = null, Action<AuditOrchestrator.EstadoEntidadActual> estadoCallback = null)
         {
             try
             {
+                _cabeceraCallback = cabeceraCallback;
+
                 // Leer conexiones
                 string connDev = ConfigurationManager.AppSettings["D365_CONNECTION_DEV"];
                 string connProd = ConfigurationManager.AppSettings["D365_CONNECTION_PROD"];
@@ -24,7 +28,7 @@ namespace AuditLogsExtractor
                 int mesesConservar = int.Parse(config["months_to_keep"]);
                 DateTime fechaCorte = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1).AddMonths(-mesesConservar);
 
-                Logger.Log($"Iniciando proceso de extracción - (Anteriores a {fechaCorte:MMM yy})");
+                //Logger.Log($"Iniciando proceso de extracción - (Anteriores a {fechaCorte:MMM yy})");
 
                 // Entidades
                 var entidades = new List<(string logicalName, int otc)>();
@@ -46,25 +50,33 @@ namespace AuditLogsExtractor
                     config["sp_user"],
                     config["sp_password"]);
 
+
+                //Asignar valores iniciales APP
+                _cabeceraCallback?.Invoke(
+                    $"📅 Fecha corte: {fechaCorte:MMM yyyy}",
+                    $"⚙️ Modo: {(zipModeActivo ? "ZIP" : "Single")}",
+                    $"📂 SharePoint: {config["sp_upload_folder"]}" // ← asegúrate que sea público
+                );
+
                 string backupName;
                 var bitacora = BitacoraManager.DownloadOrCreateBitacora(uploader, out backupName);
                 Logger.Log("Bitácora local lista (descargada y respaldada)","",ConsoleColor.Magenta);
 
                 var carpetasVerificadas = bitacora.GetVerifiedFolders();
-                uploader.SetCarpetasVerificadas(carpetasVerificadas);
+                uploader.SetVerifiedFolders(carpetasVerificadas);
 
                 var orquestador = new AuditOrchestrator(
                     readerProd, processor, exporter, uploader,
-                    bitacora, backupName, entidades, fechaCorte, token);
+                    bitacora, backupName, entidades, fechaCorte, token, estadoCallback);
 
                 if (zipModeActivo)
                 {
-                    Logger.Log("🛠️ Modo de ejecución ZIP activado.", "", ConsoleColor.Cyan);
+                    //Logger.Log("🛠️ Modo de ejecución ZIP activado.", "", ConsoleColor.Cyan);
                     orquestador.EjecutarZip();
                 }
                 else
                 {
-                    Logger.Log("🛠️ Modo de ejecución Single activado.", "", ConsoleColor.Cyan);
+                    //Logger.Log("🛠️ Modo de ejecución Single activado.", "", ConsoleColor.Cyan);
                     orquestador.Ejecutar();
                 }
 

@@ -38,13 +38,13 @@ namespace AuditLogsUI
                 });
             };
 
-            Logger.ExternalProgress = progreso =>
+            /*Logger.ExternalProgress = progreso =>
             {
                 Dispatcher.Invoke(() =>
                 {
                     txtProgreso.Text = progreso;
                 });
-            };
+            };*/
         }
 
         private void btnIniciar_Click(object sender, RoutedEventArgs e)
@@ -58,7 +58,7 @@ namespace AuditLogsUI
             {
                 try
                 {
-                    _runner.Ejecutar(_cts.Token, LogDesdeUI);
+                    _runner.Ejecutar(_cts.Token, LogDesdeUI, MostrarCabecera, ActualizarEstadoEntidad);
                 }
                 catch (OperationCanceledException)
                 {
@@ -72,7 +72,6 @@ namespace AuditLogsUI
                 {
                     Dispatcher.Invoke(() =>
                     {
-                        txtProgreso.Text = string.Empty;
                         btnIniciar.IsEnabled = true;
                         btnPausar.IsEnabled = false;
                     });
@@ -83,10 +82,31 @@ namespace AuditLogsUI
             hilo.Start();
         }
 
+        private void ActualizarEstadoEntidad(AuditOrchestrator.EstadoEntidadActual estado)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                //lblEntidadActual.Text = $"Entidad actual: {estado.Entidad} ({estado.Actual}/{estado.Total})";
+                lblEntidadActual.Text = $"Entidad actual: {estado.Entidad} ({estado.Actual}/{estado.Total}) - {((double)estado.Actual / Math.Max(1, estado.Total)):P0}";
+                progressEntidad.Maximum = estado.Total;
+                progressEntidad.Value = estado.Actual;
+
+                txtResumenEntidad.Text = $"🟩 {estado.Entidad}: Exportados {estado.Exportados} - Sin audit {estado.SinAuditoria} - Previos {estado.Previos} - Errores {estado.Errores} - ⏱️ {estado.Duracion:mm\\:ss}";
+            });
+        }
+        private void MostrarCabecera(string fecha, string modo, string destino)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                txtFechaCorte.Text = fecha;
+                txtModoEjecucion.Text = modo;
+                txtSharePointDestino.Text = destino;
+            });
+        }
+
         private void btnPausar_Click(object sender, RoutedEventArgs e)
         {
             _cts?.Cancel();
-            txtProgreso.Text = string.Empty;
             Logger.Log("Pausa solicitada desde la interfaz.", "WARN");
         }
 

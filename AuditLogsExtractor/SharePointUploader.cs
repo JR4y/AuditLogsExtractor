@@ -1,4 +1,5 @@
-﻿using System;
+﻿// Refactorización intermedia: limpieza, regiones y renombrado de miembros (sin modificar lógica interna)
+using System;
 using System.Collections.Generic;
 using System.Configuration;
 using System.IO;
@@ -12,20 +13,22 @@ namespace AuditLogsExtractor
 {
     public class SharePointUploader
     {
+        #region Fields and Constructor
+
         private readonly string _siteUrl;
         private readonly string _uploadFolder;
         private readonly string _username;
         private readonly string _password;
-        private HashSet<string> _carpetasVerificadas = new HashSet<string>();
+        private HashSet<string> _verifiedFolders = new HashSet<string>();
 
         private readonly object _folderLock = new object();
         private readonly object _authLock = new object();
         private CookieContainer _authCookies = null;
-        private DateTime _ultimaAutenticacion = DateTime.MinValue;
+        private DateTime _lastAuthTime = DateTime.MinValue;
 
         private const int MaxRetries = 5;
-        private const int InitialDelayMs = 1000; // 1 segundo
-        private const int MaxDelayMs = 10000;    // 10 segundos como tope
+        private const int InitialDelayMs = 1000;
+        private const int MaxDelayMs = 10000;
 
         public SharePointUploader(string siteUrl, string libraryPath, string username, string password)
         {
@@ -35,31 +38,39 @@ namespace AuditLogsExtractor
             _password = password;
         }
 
-        public void SetCarpetasVerificadas(HashSet<string> carpetas)
+        #endregion
+
+        #region Folder Tracking
+
+        public void SetVerifiedFolders(HashSet<string> folders)
         {
-            _carpetasVerificadas = carpetas ?? new HashSet<string>();
+            _verifiedFolders = folders ?? new HashSet<string>();
         }
 
-        public HashSet<string> GetCarpetasVerificadas()
+        public HashSet<string> GetVerifiedFolders()
         {
             lock (_folderLock)
             {
-                return new HashSet<string>(_carpetasVerificadas);
+                return new HashSet<string>(_verifiedFolders);
             }
         }
 
-        private bool EntidadTieneArbolCompleto(string entidad, HashSet<string> carpetas)
+        private bool HasCompleteFolderTree(string entity, HashSet<string> folders)
         {
-            return carpetas.Count(c => c.StartsWith(entidad + "|", StringComparison.OrdinalIgnoreCase)) >= 256;
+            return folders.Count(c => c.StartsWith(entity + "|", StringComparison.OrdinalIgnoreCase)) >= 256;
         }
 
-        public void UploadFile(string localFilePath, string sharepointRelativePath, string entidad = null)
+        #endregion
+
+        #region Upload Methods
+
+        public void UploadFile(string localFilePath, string sharepointRelativePath, string entity = null)
         {
             try
             {
                 if (string.IsNullOrWhiteSpace(localFilePath) || !File.Exists(localFilePath))
                 {
-                    Logger.Log($"❌ Archivo local no encontrado: {localFilePath}","ERROR");
+                    Logger.Log($"❌ Archivo local no encontrado: {localFilePath}", "ERROR");
                     return;
                 }
 
@@ -71,23 +82,18 @@ namespace AuditLogsExtractor
 
                 if (authCookies == null)
                 {
-                    Logger.Log("❌ No se obtuvieron cookies de autenticación.","ERROR");
+                    Logger.Log("❌ No se obtuvieron cookies de autenticación.", "ERROR");
                     return;
                 }
 
-                // Crear estructura de carpetas en SharePoint
                 string relativeFolder = Path.GetDirectoryName(sharepointRelativePath)?.Replace("\\", "/") ?? "";
                 if (!string.IsNullOrEmpty(relativeFolder))
                 {
                     string[] folders = relativeFolder.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
 
-                    // 🧠 Extraer entidad desde la ruta
-                    //string entidad = folders.Length >= 2 ? folders[folders.Length - 2] : null;
-
-                    // 🧱 Validar si la entidad ya tiene su árbol completo
-                    if (!string.IsNullOrEmpty(entidad) && EntidadTieneArbolCompleto(entidad, _carpetasVerificadas))
+                    if (!string.IsNullOrEmpty(entity) && HasCompleteFolderTree(entity, _verifiedFolders))
                     {
-                        //Console.WriteLine($"📁 Estructura completa detectada para entidad '{entidad}', se omite creación de carpetas.");
+                        // skip
                     }
                     else
                     {
@@ -98,16 +104,14 @@ namespace AuditLogsExtractor
                             currentFolder += "/" + folder;
 
                             string id = null;
-
-                            // Parte relativa real, sin incluir _uploadFolder
                             string relativeToUpload = currentFolder.Replace(_uploadFolder.Trim('/'), "").Trim('/');
 
                             var segments = relativeToUpload.Split('/');
                             if (segments.Length >= 2)
                             {
-                                string entidad2 = segments[segments.Length - 2];
-                                string prefijo = segments[segments.Length - 1];
-                                id = $"{entidad2}|{prefijo}";
+                                string entityPart = segments[segments.Length - 2];
+                                string prefix = segments[segments.Length - 1];
+                                id = $"{entityPart}|{prefix}";
                             }
 
                             EnsureSharePointFolder(_siteUrl, currentFolder, authCookies, id);
@@ -115,7 +119,6 @@ namespace AuditLogsExtractor
                     }
                 }
 
-                // Subir archivo real
                 string uploadUrl = $"{_siteUrl.TrimEnd('/')}{(_uploadFolder.StartsWith("/") ? "" : "/")}{_uploadFolder.TrimEnd('/')}/{sharepointRelativePath.Replace("\\", "/")}";
                 byte[] fileBytes = File.ReadAllBytes(localFilePath);
 
@@ -146,7 +149,7 @@ namespace AuditLogsExtractor
                             }
                         }
 
-                        break; // Éxito, salimos del while
+                        break;
                     }
                     catch (WebException ex) when (ex.Response is HttpWebResponse resp && (int)resp.StatusCode == 429)
                     {
@@ -160,12 +163,10 @@ namespace AuditLogsExtractor
                         }
 
                         Thread.Sleep(delayMs);
-                        delayMs = Math.Min(delayMs * 2, MaxDelayMs); // backoff exponencial
+                        delayMs = Math.Min(delayMs * 2, MaxDelayMs);
                     }
                     catch (WebException ex) when (ex.Response is HttpWebResponse resp)
                     {
-                        //Logger.Log($"Fallo en subida de archivo. HTTP {resp.StatusCode} - {resp.StatusDescription}","ERROR");
-
                         if (resp.StatusCode == HttpStatusCode.Unauthorized || resp.StatusCode == HttpStatusCode.Forbidden)
                         {
                             Logger.Log("🔐 Posible cookie expirada o inválida", "ERROR");
@@ -174,54 +175,14 @@ namespace AuditLogsExtractor
                         throw new Exception($"❌ Fallo en subida. Código HTTP: {resp.StatusCode}, Descripción: {resp.StatusDescription}", ex);
                     }
                 }
-
-                /*HttpWebRequest request = (HttpWebRequest)WebRequest.Create(uploadUrl);
-                request.Method = "PUT";
-                request.ContentLength = fileBytes.Length;
-                request.CookieContainer = authCookies;
-
-                request.Headers.Add("Overwrite", "T");
-                request.Headers.Add("Translate", "f");
-
-                using (Stream requestStream = request.GetRequestStream())
-                {
-                    requestStream.Write(fileBytes, 0, fileBytes.Length);
-                }
-
-                try
-                {
-                    using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
-                    {
-                        if (response.StatusCode != HttpStatusCode.Created && response.StatusCode != HttpStatusCode.OK)
-                        {
-                            throw new Exception($"Respuesta inesperada del servidor al subir archivo: {response.StatusCode}");
-                        }
-                    }
-                }
-                catch (WebException ex)
-                {
-                    if (ex.Response is HttpWebResponse resp)
-                    {
-                        Console.WriteLine(); // fuerza salto desde el progreso                  
-                        Logger.Error($"Fallo en subida de archivo. HTTP {resp.StatusCode} - {resp.StatusDescription}");
-
-                        if (resp.StatusCode == HttpStatusCode.Unauthorized || resp.StatusCode == HttpStatusCode.Forbidden)
-                        {
-                            Console.WriteLine("🔐 Posible cookie expirada o inválida");
-                        }
-
-                        throw new Exception($"❌ Fallo en subida. Código HTTP: {resp.StatusCode}, Descripción: {resp.StatusDescription}", ex);
-                    }
-                }*/
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                //Console.WriteLine($"❌ Error subiendo archivo: {ex.Message}");
-                throw; // <== esta línea es la que falta
+                throw;
             }
         }
 
-        public void UploadZipFile(string zipPath, string sharepointRelativePath, string entidad = null)
+        public void UploadZipFile(string zipPath, string sharepointRelativePath, string entity = null)
         {
             try
             {
@@ -243,15 +204,14 @@ namespace AuditLogsExtractor
                     return;
                 }
 
-                // Crear estructura de carpetas si aplica
                 string relativeFolder = Path.GetDirectoryName(sharepointRelativePath)?.Replace("\\", "/") ?? "";
                 if (!string.IsNullOrEmpty(relativeFolder))
                 {
                     string[] folders = relativeFolder.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
 
-                    if (!string.IsNullOrEmpty(entidad) && EntidadTieneArbolCompleto(entidad, _carpetasVerificadas))
+                    if (!string.IsNullOrEmpty(entity) && HasCompleteFolderTree(entity, _verifiedFolders))
                     {
-                        // ya verificada
+                        // skip
                     }
                     else
                     {
@@ -266,9 +226,9 @@ namespace AuditLogsExtractor
                             var segments = relativeToUpload.Split('/');
                             if (segments.Length >= 2)
                             {
-                                string entidad2 = segments[segments.Length - 2];
-                                string prefijo = segments[segments.Length - 1];
-                                id = $"{entidad2}|{prefijo}";
+                                string entityPart = segments[segments.Length - 2];
+                                string prefix = segments[segments.Length - 1];
+                                id = $"{entityPart}|{prefix}";
                             }
 
                             EnsureSharePointFolder(_siteUrl, currentFolder, authCookies, id);
@@ -276,7 +236,6 @@ namespace AuditLogsExtractor
                     }
                 }
 
-                // Subida real del ZIP
                 string uploadUrl = $"{_siteUrl.TrimEnd('/')}{(_uploadFolder.StartsWith("/") ? "" : "/")}{_uploadFolder.TrimEnd('/')}/{sharepointRelativePath.Replace("\\", "/")}";
                 byte[] fileBytes = File.ReadAllBytes(zipPath);
 
@@ -308,7 +267,7 @@ namespace AuditLogsExtractor
                             }
                         }
 
-                        break; // éxito
+                        break;
                     }
                     catch (WebException ex) when (ex.Response is HttpWebResponse resp && (int)resp.StatusCode == 429)
                     {
@@ -326,38 +285,39 @@ namespace AuditLogsExtractor
                     }
                     catch (WebException ex) when (ex.Response is HttpWebResponse resp)
                     {
-                        Logger.Log($"Fallo en subida de ZIP. HTTP {resp.StatusCode} - {resp.StatusDescription}","ERROR");
+                        Logger.Log($"Fallo en subida de ZIP. HTTP {resp.StatusCode} - {resp.StatusDescription}", "ERROR");
 
                         if (resp.StatusCode == HttpStatusCode.Unauthorized || resp.StatusCode == HttpStatusCode.Forbidden)
                         {
-                            Logger.Log("🔐 Posible cookie expirada o inválida","ERROR");
+                            Logger.Log("🔐 Posible cookie expirada o inválida", "ERROR");
                         }
 
                         throw new Exception($"❌ Fallo en subida ZIP. Código HTTP: {resp.StatusCode}, Descripción: {resp.StatusDescription}", ex);
                     }
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 throw;
             }
         }
 
-        private void EnsureSharePointFolder(string siteUrl, string folderRelativeUrl, CookieContainer authCookies, string carpetaId = null)
+        #endregion
+
+        #region Folder Creation
+
+        private void EnsureSharePointFolder(string siteUrl, string folderRelativeUrl, CookieContainer authCookies, string folderId = null)
         {
-            if (!string.IsNullOrEmpty(carpetaId))
+            if (!string.IsNullOrEmpty(folderId))
             {
                 lock (_folderLock)
                 {
-                    if (_carpetasVerificadas.Contains(carpetaId))
+                    if (_verifiedFolders.Contains(folderId))
                         return;
 
-                    _carpetasVerificadas.Add(carpetaId);
-                    //Logger.Trace($"📁 Carpeta verificada agregada: {carpetaId}");
+                    _verifiedFolders.Add(folderId);
                 }
             }
-
-
 
             string folderUrl = $"{siteUrl.TrimEnd('/')}{(folderRelativeUrl.StartsWith("/") ? "" : "/")}{folderRelativeUrl.TrimEnd('/')}";
 
@@ -380,7 +340,7 @@ namespace AuditLogsExtractor
             {
                 if (ex.Response is HttpWebResponse resp && resp.StatusCode == HttpStatusCode.MethodNotAllowed)
                 {
-                    // Ya existe la carpeta
+                    // La carpeta ya existe
                 }
                 else
                 {
@@ -388,6 +348,10 @@ namespace AuditLogsExtractor
                 }
             }
         }
+
+        #endregion
+
+        #region Authentication
 
         private CookieContainer GetAuthenticationCookies(string siteUrl, string username, string password)
         {
@@ -467,9 +431,7 @@ namespace AuditLogsExtractor
             {
                 if (ex.Response is HttpWebResponse resp)
                 {
-                    var statusCode = (int)resp.StatusCode;
-                    var statusDesc = resp.StatusDescription;
-                    throw new Exception($"❌ Error en autenticación SAML: HTTP {statusCode} - {statusDesc}", ex);
+                    throw new Exception($"❌ Error en autenticación SAML: HTTP {(int)resp.StatusCode} - {resp.StatusDescription}", ex);
                 }
                 else
                 {
@@ -486,14 +448,18 @@ namespace AuditLogsExtractor
         {
             lock (_authLock)
             {
-                if (_authCookies != null && (DateTime.Now - _ultimaAutenticacion).TotalMinutes < 15)
+                if (_authCookies != null && (DateTime.Now - _lastAuthTime).TotalMinutes < 15)
                     return _authCookies;
 
                 _authCookies = GetAuthenticationCookies(_siteUrl, _username, _password);
-                _ultimaAutenticacion = DateTime.Now;
+                _lastAuthTime = DateTime.Now;
                 return _authCookies;
             }
         }
+
+        #endregion
+
+        #region File Download
 
         public void DownloadFile(string sharepointRelativePath, string localDestinationPath)
         {
@@ -523,26 +489,24 @@ namespace AuditLogsExtractor
                 {
                     responseStream.CopyTo(fileStream);
                 }
-
-                //Console.WriteLine($"📥 Archivo descargado exitosamente: {localDestinationPath}");
             }
             catch (WebException ex)
             {
                 if (ex.Response is HttpWebResponse resp && resp.StatusCode == HttpStatusCode.NotFound)
                 {
-                    //Console.WriteLine($"⚠️ Archivo no encontrado en SharePoint: {sharepointRelativePath}");
+                    // Archivo no encontrado en SharePoint
                 }
                 else
                 {
-                    //Console.WriteLine($"❌ Error al descargar archivo '{sharepointRelativePath}': {ex.Message}");
+                    Logger.Log($"❌ Error al descargar archivo '{sharepointRelativePath}': {ex.Message}", "ERROR");
                 }
             }
             catch (Exception ex)
             {
-                Logger.Log($"Error inesperado en descarga de archivo '{sharepointRelativePath}': {ex.Message}","ERROR");
+                Logger.Log($"Error inesperado en descarga de archivo '{sharepointRelativePath}': {ex.Message}", "ERROR");
             }
         }
+
+        #endregion
     }
-
 }
-

@@ -2,14 +2,19 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Audit Logs Extractor" Height="500" Width="700">
+    
     <Grid Margin="10">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <!-- Botones -->
             <RowDefinition Height="Auto"/>
-            <!-- Progreso -->
+            <!-- Encabezado -->
+            <RowDefinition Height="Auto"/>
+            <!-- Entidad actual + progreso -->
+            <RowDefinition Height="Auto"/>
+            <!-- Resumen -->
             <RowDefinition Height="*"/>
-            <!-- Consola/log -->
+            <!-- Log -->
         </Grid.RowDefinitions>
 
         <!-- Botones -->
@@ -18,28 +23,38 @@
             <Button x:Name="btnPausar" Content="Pausar" Click="btnPausar_Click" IsEnabled="False"/>
         </StackPanel>
 
-        <!-- Progreso -->
-        <TextBlock x:Name="txtProgreso"
-           Grid.Row="1"
-           Margin="0,0,0,10"
-           FontFamily="Consolas"
-           FontSize="14"
-           FontWeight="Bold"
-           Foreground="DarkBlue"
-           Background="#FFEFEF"
-           Padding="4"
-           TextWrapping="NoWrap"/>
+        <!-- Encabezado informativo -->
+        <StackPanel Orientation="Horizontal" Grid.Row="1" Margin="0,0,0,10">
+            <TextBlock x:Name="txtFechaCorte" FontWeight="Bold"/>
+            <TextBlock x:Name="txtModoEjecucion" Margin="20,0,0,0"/>
+            <TextBlock x:Name="txtSharePointDestino" Margin="20,0,0,0"/>
+        </StackPanel>
+
+        <!-- Entidad actual + progreso -->
+        <StackPanel Grid.Row="2" Orientation="Vertical" Margin="0,0,0,10">
+            <TextBlock x:Name="lblEntidadActual" Text="Entidad actual: -" FontWeight="Bold" FontSize="14"/>
+            <ProgressBar x:Name="progressEntidad" Height="20" Minimum="0" Maximum="100" Value="0" Margin="0,5,0,0"/>
+        </StackPanel>
+
+        <!-- Resumen de entidad -->
+        <TextBlock x:Name="txtResumenEntidad"
+               Grid.Row="3"
+               Margin="0,0,0,10"
+               FontFamily="Consolas"
+               FontSize="13"
+               Foreground="DarkGreen"
+               TextWrapping="Wrap"/>
 
         <!-- Consola / Log -->
         <RichTextBox x:Name="txtConsola"
-                     Grid.Row="2"
-                     IsReadOnly="True"
-                     VerticalScrollBarVisibility="Auto"
-                     FontFamily="Consolas"
-                     FontSize="12"
-                     Background="Black"
-                     BorderBrush="Gray"
-                     BorderThickness="1"
-                     Padding="4" />
+                 Grid.Row="4"
+                 IsReadOnly="True"
+                 VerticalScrollBarVisibility="Auto"
+                 FontFamily="Consolas"
+                 FontSize="12"
+                 Background="Black"
+                 BorderBrush="Gray"
+                 BorderThickness="1"
+                 Padding="4"/>
     </Grid>
 </Window>
