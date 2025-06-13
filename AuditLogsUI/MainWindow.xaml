@@ -5,21 +5,41 @@
     <Grid Margin="10">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
+            <!-- Botones -->
+            <RowDefinition Height="Auto"/>
+            <!-- Progreso -->
             <RowDefinition Height="*"/>
+            <!-- Consola/log -->
         </Grid.RowDefinitions>
 
-        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
-            <Button x:Name="btnIniciar" Content="Iniciar" Width="100" Margin="0,0,10,0" Click="btnIniciar_Click"/>
-            <Button x:Name="btnPausar" Content="Pausar" Width="100" Click="btnPausar_Click"/>
+        <!-- Botones -->
+        <StackPanel Orientation="Horizontal" Grid.Row="0" Margin="0,0,0,10">
+            <Button x:Name="btnIniciar" Content="Iniciar" Margin="0,0,10,0" Click="btnIniciar_Click"/>
+            <Button x:Name="btnPausar" Content="Pausar" Click="btnPausar_Click" IsEnabled="False"/>
         </StackPanel>
 
-        <TextBox x:Name="txtConsola" Grid.Row="1" 
-                 VerticalScrollBarVisibility="Auto" 
-                 HorizontalScrollBarVisibility="Auto"
-                 FontFamily="Consolas" FontSize="12"
-                 IsReadOnly="True" 
-                 TextWrapping="Wrap"
-                 AcceptsReturn="True"
-                 Background="Black" Foreground="White"/>
+        <!-- Progreso -->
+        <TextBlock x:Name="txtProgreso"
+           Grid.Row="1"
+           Margin="0,0,0,10"
+           FontFamily="Consolas"
+           FontSize="14"
+           FontWeight="Bold"
+           Foreground="DarkBlue"
+           Background="#FFEFEF"
+           Padding="4"
+           TextWrapping="NoWrap"/>
+
+        <!-- Consola / Log -->
+        <RichTextBox x:Name="txtConsola"
+                     Grid.Row="2"
+                     IsReadOnly="True"
+                     VerticalScrollBarVisibility="Auto"
+                     FontFamily="Consolas"
+                     FontSize="12"
+                     Background="Black"
+                     BorderBrush="Gray"
+                     BorderThickness="1"
+                     Padding="4" />
     </Grid>
 </Window>

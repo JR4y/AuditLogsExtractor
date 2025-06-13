@@ -52,7 +52,7 @@ namespace AuditLogsExtractor
 
             foreach (var (entidad, otc) in _entidades)
             {
-                Logger.Info($"======== 📁 Procesando entidad: {entidad} ========", ConsoleColor.Blue);
+                Logger.Log($"======== 📁 Procesando entidad: {entidad} ========","", ConsoleColor.Blue);
 
                 List<string> recordIds = _readerProd.GetRecordIds(entidad, _fechaCorte);
                 var total = recordIds.Count;
@@ -87,7 +87,7 @@ namespace AuditLogsExtractor
                 }
                 catch (OperationCanceledException)
                 {
-                    Logger.Warning("⏸️ Proceso pausado. Puede reanudarse sin pérdida de información.");
+                    Logger.Log("Proceso pausado. Puede reanudarse sin pérdida de información.","WARN");
                     break; // Sal del foreach de entidades directamente;
                 }
                 finally
@@ -156,7 +156,7 @@ namespace AuditLogsExtractor
                 }
                 catch (Exception)
                 {
-                    Logger.Error($"❌ Error al subir/eliminar archivo {archivo}");
+                    Logger.Log($"Error al subir/eliminar archivo {archivo}","ERROR");
                     _bitacora.MarkAsExported(entidad, recordId, fechaCorte, "error_subida");
                     Interlocked.Increment(ref errores);
                 }
@@ -164,7 +164,7 @@ namespace AuditLogsExtractor
             catch (Exception ex)
             {
                 Interlocked.Increment(ref errores);
-                Logger.Error($"❌ Error al procesar {entidad} - {recordId}: {ex.Message}");
+                Logger.Log($"Error al procesar {entidad} - {recordId}: {ex.Message}");
             }
         }
         #endregion
@@ -172,7 +172,7 @@ namespace AuditLogsExtractor
         #region Guardado resumen y bitácora
         private void GuardarResumenEntidad(string entidad, int totalActual, int sinAuditoria, int procesados, int errores, int prevProcesados, TimeSpan duracion)
         {
-            Logger.Ok($"Resumen {entidad} - Exportados: {procesados}, Sin audit: {sinAuditoria}, Previos: {prevProcesados}, Errores: {errores}, Tiempo: {duracion:mm\\:ss}");
+            Logger.Log($"Resumen {entidad} - Exportados: {procesados}, Sin audit: {sinAuditoria}, Previos: {prevProcesados}, Errores: {errores}, Tiempo: {duracion:mm\\:ss}","OK");
 
             try
             {
@@ -189,7 +189,7 @@ namespace AuditLogsExtractor
             }
             catch (Exception ex)
             {
-                Logger.Error($"❌ Error al guardar resumen de entidad '{entidad}': {ex.Message}");
+                Logger.Log($"Error al guardar resumen de entidad '{entidad}': {ex.Message}");
             }
         }
 
@@ -202,11 +202,11 @@ namespace AuditLogsExtractor
                 _bitacora.SaveVerifiedFoldersFrom(_uploader.GetCarpetasVerificadas());
                 _bitacora.Close();
                 BitacoraManager.UploadBitacoraAndBackup(_uploader, _backupName);
-                Logger.Info("📤 Bitácora y respaldo subidos a SharePoint.", ConsoleColor.Magenta);
+                Logger.Log("📤 Bitácora y respaldo subidos a SharePoint.","", ConsoleColor.Magenta);
             }
             catch (Exception ex)
             {
-                Logger.Error($"❌ Error al cerrar/subir bitácora: {ex.Message}");
+                Logger.Log($"Error al cerrar/subir bitácora: {ex.Message}");
             }
         }
         #endregion
@@ -214,14 +214,14 @@ namespace AuditLogsExtractor
         #region Reintentos
         private void EjecutarReintentosFallidos()
         {
-            Logger.Info("♻️ Iniciando reintento de subidas fallidas...", ConsoleColor.DarkYellow);
+            Logger.Log("Iniciando reintento de subidas fallidas...","", ConsoleColor.DarkYellow);
 
             foreach (var (entidad, recordId, fecha) in _bitacora.GetUploadErrors())
             {
                 string archivo = $"output\\{recordId}.csv";
                 if (!File.Exists(archivo))
                 {
-                    Logger.Warning($"⚠️ Archivo pendiente no encontrado: {archivo}");
+                    Logger.Log($"⚠️ Archivo pendiente no encontrado: {archivo}", "WARN");
                     continue;
                 }
 
@@ -234,16 +234,16 @@ namespace AuditLogsExtractor
                     _bitacora.MarkRetryAsSuccessful(entidad, recordId, fecha);
                     File.Delete(archivo);
 
-                    Logger.Info($"🔁 Reintentando para entidad '{entidad}', ID = {recordId}", ConsoleColor.DarkGray);
+                    Logger.Log($"Reintentando para entidad '{entidad}', ID = {recordId}", "", ConsoleColor.DarkGray);
                 }
                 catch (Exception ex)
                 {
-                    Logger.Error($"❌ Reintento fallido para {archivo}: {ex.Message}");
+                    Logger.Log($"❌ Reintento fallido para {archivo}: {ex.Message}","ERROR");
                     _bitacora.MarkAsExported(entidad, recordId, fecha, "error_subida_reintento");
                 }
             }
 
-            Logger.Info("🛑 Finalizado el proceso de reintentos.", ConsoleColor.DarkYellow);
+            Logger.Log("Finalizado el proceso de reintentos.","INFO",ConsoleColor.DarkYellow);
         }
         #endregion
 
@@ -253,7 +253,7 @@ namespace AuditLogsExtractor
             var carpetasYaVerificadas = _bitacora.GetVerifiedFolders(); // ← clave para evitar reprocesar
             foreach (var (entidad, otc) in _entidades)
             {
-                Logger.Info($"======== 📁 [ZIP] Procesando entidad: {entidad} ========", ConsoleColor.Cyan);
+                Logger.Log($"======== 📁 [ZIP] Procesando entidad: {entidad} ========","", ConsoleColor.Cyan);
 
                 List<string> recordIds = _readerProd.GetRecordIds(entidad, _fechaCorte);
                 var guidsProcesados = _bitacora.GetRecordIdsByStatus(entidad, "subido")
@@ -277,7 +277,7 @@ namespace AuditLogsExtractor
                 {
                     if (_token.IsCancellationRequested)
                     {
-                        Logger.Warning("⏸️ Pausa detectada. Finalizando ejecución al terminar prefijo actual.");
+                        Logger.Log("⏸️ Pausa detectada. Finalizando ejecución al terminar prefijo actual.", "WARN");
                         break;
                     }
 
@@ -287,11 +287,11 @@ namespace AuditLogsExtractor
                     string keyVerificacion = $"{entidad}|{prefijo}";
                     if (carpetasYaVerificadas.Contains(keyVerificacion))
                     {
-                        Logger.Info($"⏩ Prefijo '{prefijo}' ya procesado previamente, se omite.");
+                        Logger.Log($"Prefijo '{prefijo}' ya procesado previamente, se omite.");
                         continue;
                     }
 
-                    Logger.Info($"→ Prefijo '{prefijo}' ({grupo.Count()} registros)");
+                    Logger.Log($"→ Prefijo '{prefijo}' ({grupo.Count()} registros)");
 
                     foreach (var recordId in grupo)
                     {
@@ -349,7 +349,7 @@ namespace AuditLogsExtractor
             catch (Exception ex)
             {
                 Interlocked.Increment(ref errores);
-                Logger.Error($"❌ Error al procesar [ZIP] {entidad} - {recordId}: {ex.Message}");
+                Logger.Log($"Error al procesar [ZIP] {entidad} - {recordId}: {ex.Message}","ERROR");
             }
         }
 
@@ -360,14 +360,14 @@ namespace AuditLogsExtractor
                 string carpetaOrigen = Path.Combine("output", entidad, prefijo);
                 if (!Directory.Exists(carpetaOrigen))
                 {
-                    Logger.Warning($"⚠️ Carpeta de prefijo no encontrada: {carpetaOrigen}");
+                    Logger.Log($"Carpeta de prefijo no encontrada: {carpetaOrigen}","WARN");
                     return;
                 }
 
                 var archivosCsv = Directory.GetFiles(carpetaOrigen, "*.csv").ToList();
                 if (archivosCsv.Count == 0)
                 {
-                    Logger.Warning($"⚠️ No hay archivos CSV para comprimir en '{carpetaOrigen}'");
+                    Logger.Log($"No hay archivos CSV para comprimir en '{carpetaOrigen}'","WARN");
                     return;
                 }
 
@@ -416,7 +416,7 @@ namespace AuditLogsExtractor
                     }
                     catch (Exception ex)
                     {
-                        Logger.Error($"❌ Error subiendo ZIP {nombreZip}: {ex.Message}");
+                        Logger.Log($"Error subiendo ZIP {nombreZip}: {ex.Message}", "ERROR");
                         fallo = true;
                         break;
                     }
@@ -427,16 +427,16 @@ namespace AuditLogsExtractor
                 if (!fallo)
                 {
                     Directory.Delete(carpetaOrigen, true);
-                    Logger.Ok($"📤 ZIPs subidos y bitácora actualizada para prefijo '{prefijo}'");
+                    Logger.Log($"ZIPs subidos y bitácora actualizada para prefijo '{prefijo}'","OK");
                 }
                 else
                 {
-                    Logger.Warning($"⚠️ Subida incompleta, se conservan archivos y bitácora parcial para prefijo '{prefijo}'");
+                    Logger.Log($"Subida incompleta, se conservan archivos y bitácora parcial para prefijo '{prefijo}'","WARN");
                 }
             }
             catch (Exception ex)
             {
-                Logger.Error($"❌ Error en proceso de ZIP por partes para entidad '{entidad}', prefijo '{prefijo}': {ex.Message}");
+                Logger.Log($"Error en proceso de ZIP por partes para entidad '{entidad}', prefijo '{prefijo}': {ex.Message}", "ERROR");
             }
         }
         #endregion

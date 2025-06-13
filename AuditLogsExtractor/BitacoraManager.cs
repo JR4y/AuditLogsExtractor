@@ -106,7 +106,7 @@ namespace AuditLogsExtractor
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ Error al guardar resumen de ejecución: {ex.Message}");
+                Logger.Log($"Error al guardar resumen de ejecución: {ex.Message}","ERROR");
             }
         }
 
@@ -129,18 +129,18 @@ namespace AuditLogsExtractor
             {
                 if (ex.Response is HttpWebResponse resp && resp.StatusCode == HttpStatusCode.NotFound)
                 {
-                    Logger.Warning("⚠️ Bitácora no encontrada en SharePoint.");
+                    Logger.Log("⚠️ Bitácora no encontrada en SharePoint.", "WARN");
                 }
                 else
                 {
-                    Logger.Error($"❌ Error descargando bitácora: {ex.Message}");
+                    Logger.Log($"Error descargando bitácora: {ex.Message}","ERROR");
                     throw;
                 }
             }
 
             if (!downloaded && !File.Exists(fileName))
             {
-                Logger.Warning("⚠️ Bitácora no encontrada localmente. Se creará nueva.");
+                Logger.Log("Bitácora no encontrada localmente. Se creará nueva.", "WARN");
                 new BitacoraManager(fileName).Dispose();
             }
 
@@ -185,12 +185,12 @@ namespace AuditLogsExtractor
                 }
                 else
                 {
-                    Logger.Warning("⚠️ No se subió backup porque no fue generado o no existe.");
+                    Logger.Log("No se subió backup porque no fue generado o no existe.","WARN");
                 }
             }
             catch (Exception ex)
             {
-                Logger.Error($"❌ Error subiendo bitácora o respaldo: {ex.Message}");
+                Logger.Log($"Error subiendo bitácora o respaldo: {ex.Message}","ERROR");
             }
 
             if (mainUploaded && backupUploaded)
@@ -201,7 +201,7 @@ namespace AuditLogsExtractor
                 }
                 catch (Exception ex)
                 {
-                    Logger.Warning($"⚠️ No se pudo eliminar backup local: {ex.Message}");
+                    Logger.Log($"No se pudo eliminar backup local: {ex.Message}","WARN");
                 }
             }
         }
@@ -214,7 +214,7 @@ namespace AuditLogsExtractor
             }
             catch (Exception ex)
             {
-                Logger.Warning($"⚠️ Error al cerrar la bitácora: {ex.Message}");
+                Logger.Log($"⚠️ Error al cerrar la bitácora: {ex.Message}", "WARN");
             }
         }
         #endregion

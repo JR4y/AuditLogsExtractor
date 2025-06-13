@@ -243,6 +243,7 @@
   <ItemGroup>
     <Compile Include="AuditOrchestrator.cs" />
     <Compile Include="AuditProcessor.cs" />
+    <Compile Include="AuditRunner.cs" />
     <Compile Include="BitacoraManager.cs" />
     <Compile Include="CsvExporter.cs" />
     <Compile Include="DynamicsReader.cs" />

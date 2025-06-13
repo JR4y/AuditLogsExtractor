@@ -6,66 +6,66 @@ namespace AuditLogsExtractor
     {
         private static readonly object _lock = new object();
         private static bool _lineaProgresoActiva = false;
+        public static Action<string, ConsoleColor?> ExternalLogger { get; set; } = null;
+        public static Action<string> ExternalProgress { get; set; } = null;
 
-        #region Info and Success
+        #region Info, Success, Warnings and Errors 
 
-        public static void Info(string message, ConsoleColor color = ConsoleColor.Gray)
+        public static void Log(string message, string prefix = "INFO", ConsoleColor? customColor = null, Exception ex = null)
         {
             lock (_lock)
             {
                 LimpiarLineaProgresoSiEsNecesario();
-                Console.ForegroundColor = color;
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] INFO: {message}");
-                Console.ResetColor();
-            }
-        }
 
-        public static void Ok(string message)
-        {
-            lock (_lock)
-            {
-                LimpiarLineaProgresoSiEsNecesario();
-                Console.ForegroundColor = ConsoleColor.Green;
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] ✅ {message}");
-                Console.ResetColor();
-            }
-        }
+                // Iconos e info visual
+                string icono;
+                ConsoleColor color;
 
-        #endregion
+                switch (prefix.ToUpperInvariant())
+                {
+                    case "OK":
+                        icono = "✅";
+                        color = ConsoleColor.Green;
+                        break;
+                    case "WARN":
+                        icono = "⚠️";
+                        color = ConsoleColor.Yellow;
+                        break;
+                    case "ERROR":
+                        icono = "❌";
+                        color = ConsoleColor.Red;
+                        break;
+                    default:
+                        icono = "ℹ️";
+                        color = ConsoleColor.Gray;
+                        break;
+                }
 
-        #region Warnings and Errors
+                // Si se especifica un color, usamos ese en lugar del predeterminado
+                if (customColor.HasValue)
+                    color = customColor.Value;
 
-        public static void Warning(string message)
-        {
-            lock (_lock)
-            {
-                LimpiarLineaProgresoSiEsNecesario();
-                Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] ⚠️  {message}");
-                Console.ResetColor();
-            }
-        }
+                string formatted = $"[{DateTime.Now:HH:mm:ss}] {prefix}: {icono} {message}";
 
-        public static void Error(string message)
-        {
-            lock (_lock)
-            {
-                LimpiarLineaProgresoSiEsNecesario();
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] ❌ {message}");
-                Console.ResetColor();
-            }
-        }
+                // Redirigir a WPF si aplica
+                ExternalLogger?.Invoke(formatted, color);
 
-        public static void ErrorWithStack(string message, Exception ex)
-        {
-            lock (_lock)
-            {
-                LimpiarLineaProgresoSiEsNecesario();
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] ❌ {message}: {ex.Message}");
-                Console.WriteLine(ex.StackTrace);
-                Console.ResetColor();
+                // Mostrar en consola solo si no hay redirección
+                if (ExternalLogger == null)
+                {
+                    Console.ForegroundColor = color;
+                    Console.WriteLine(formatted);
+                    Console.ResetColor();
+                }
+
+                // Excepción adicional, solo para consola
+                if (ex != null && ExternalLogger == null)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine(ex.Message);
+                    Console.WriteLine(ex.StackTrace);
+                    Console.ResetColor();
+                }
             }
         }
 
@@ -78,10 +78,19 @@ namespace AuditLogsExtractor
             lock (_lock)
             {
                 double avance = total == 0 ? 100 : (double)totalActual / total * 100;
-                Console.ForegroundColor = ConsoleColor.DarkCyan;
-                Console.Write($"\r[{DateTime.Now:HH:mm:ss}] {entidad} >> {avance:0.#}% ({totalActual}/{total}) - [ Act:{procesados} | Prev:{prevProcesados} | S/Audit:{sinAuditoria} | Err:{errores} ]");
-                Console.ResetColor();
-                _lineaProgresoActiva = true;
+                string formatted = $"[{DateTime.Now:HH:mm:ss}] {entidad} >> {avance:0.#}% ({totalActual}/{total}) - [ Act:{procesados} | Prev:{prevProcesados} | S/Audit:{sinAuditoria} | Err:{errores} ]";
+
+                if (ExternalProgress != null)
+                {
+                    ExternalProgress.Invoke(formatted);
+                }
+                else
+                {
+                    Console.ForegroundColor = ConsoleColor.DarkCyan;
+                    Console.Write("\r" + formatted);
+                    Console.ResetColor();
+                    _lineaProgresoActiva = true;
+                }
             }
         }
 

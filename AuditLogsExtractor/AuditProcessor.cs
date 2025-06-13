@@ -51,7 +51,7 @@ namespace AuditLogsExtractor
 
             if (!Guid.TryParse(recordId, out Guid guid))
             {
-                Logger.Warning($"⚠️ El recordId '{recordId}' no es un GUID válido.");
+                Logger.Log($"⚠️ El recordId '{recordId}' no es un GUID válido.", "WARN");
                 return audits;
             }
 

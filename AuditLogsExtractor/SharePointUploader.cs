@@ -59,7 +59,7 @@ namespace AuditLogsExtractor
             {
                 if (string.IsNullOrWhiteSpace(localFilePath) || !File.Exists(localFilePath))
                 {
-                    Console.WriteLine($"❌ Archivo local no encontrado: {localFilePath}");
+                    Logger.Log($"❌ Archivo local no encontrado: {localFilePath}","ERROR");
                     return;
                 }
 
@@ -71,7 +71,7 @@ namespace AuditLogsExtractor
 
                 if (authCookies == null)
                 {
-                    Console.WriteLine("❌ No se obtuvieron cookies de autenticación.");
+                    Logger.Log("❌ No se obtuvieron cookies de autenticación.","ERROR");
                     return;
                 }
 
@@ -151,11 +151,11 @@ namespace AuditLogsExtractor
                     catch (WebException ex) when (ex.Response is HttpWebResponse resp && (int)resp.StatusCode == 429)
                     {
                         retryCount++;
-                        Console.WriteLine($"⚠️  SharePoint devolvió 429 (Too Many Requests). Reintentando ({retryCount}/{MaxRetries}) en {delayMs}ms...");
+                        Logger.Log($"SharePoint devolvió 429 (Too Many Requests). Reintentando ({retryCount}/{MaxRetries}) en {delayMs}ms...", "ERROR");
 
                         if (retryCount > MaxRetries)
                         {
-                            Console.WriteLine($"❌ Fallo tras {MaxRetries} reintentos por 429.");
+                            Logger.Log($"❌ Fallo tras {MaxRetries} reintentos por 429.", "ERROR");
                             throw new Exception("Límite de reintentos alcanzado por error 429.", ex);
                         }
 
@@ -164,11 +164,11 @@ namespace AuditLogsExtractor
                     }
                     catch (WebException ex) when (ex.Response is HttpWebResponse resp)
                     {
-                        Logger.Error($"Fallo en subida de archivo. HTTP {resp.StatusCode} - {resp.StatusDescription}");
+                        //Logger.Log($"Fallo en subida de archivo. HTTP {resp.StatusCode} - {resp.StatusDescription}","ERROR");
 
                         if (resp.StatusCode == HttpStatusCode.Unauthorized || resp.StatusCode == HttpStatusCode.Forbidden)
                         {
-                            Console.WriteLine("🔐 Posible cookie expirada o inválida");
+                            Logger.Log("🔐 Posible cookie expirada o inválida", "ERROR");
                         }
 
                         throw new Exception($"❌ Fallo en subida. Código HTTP: {resp.StatusCode}, Descripción: {resp.StatusDescription}", ex);
@@ -227,7 +227,7 @@ namespace AuditLogsExtractor
             {
                 if (string.IsNullOrWhiteSpace(zipPath) || !File.Exists(zipPath))
                 {
-                    Console.WriteLine($"❌ Archivo ZIP no encontrado: {zipPath}");
+                    Logger.Log($"❌ Archivo ZIP no encontrado: {zipPath}", "ERROR");
                     return;
                 }
 
@@ -239,7 +239,7 @@ namespace AuditLogsExtractor
 
                 if (authCookies == null)
                 {
-                    Console.WriteLine("❌ No se obtuvieron cookies de autenticación.");
+                    Logger.Log("❌ No se obtuvieron cookies de autenticación.", "ERROR");
                     return;
                 }
 
@@ -313,11 +313,11 @@ namespace AuditLogsExtractor
                     catch (WebException ex) when (ex.Response is HttpWebResponse resp && (int)resp.StatusCode == 429)
                     {
                         retryCount++;
-                        Console.WriteLine($"⚠️  SharePoint 429 (Too Many Requests). Reintentando ({retryCount}/{MaxRetries}) en {delayMs}ms...");
+                        Logger.Log($"⚠️  SharePoint 429 (Too Many Requests). Reintentando ({retryCount}/{MaxRetries}) en {delayMs}ms...", "ERROR");
 
                         if (retryCount > MaxRetries)
                         {
-                            Console.WriteLine($"❌ Fallo tras {MaxRetries} reintentos por 429.");
+                            Logger.Log($"❌ Fallo tras {MaxRetries} reintentos por 429.", "ERROR");
                             throw new Exception("Límite de reintentos alcanzado por error 429.", ex);
                         }
 
@@ -326,11 +326,11 @@ namespace AuditLogsExtractor
                     }
                     catch (WebException ex) when (ex.Response is HttpWebResponse resp)
                     {
-                        Logger.Error($"Fallo en subida de ZIP. HTTP {resp.StatusCode} - {resp.StatusDescription}");
+                        Logger.Log($"Fallo en subida de ZIP. HTTP {resp.StatusCode} - {resp.StatusDescription}","ERROR");
 
                         if (resp.StatusCode == HttpStatusCode.Unauthorized || resp.StatusCode == HttpStatusCode.Forbidden)
                         {
-                            Console.WriteLine("🔐 Posible cookie expirada o inválida");
+                            Logger.Log("🔐 Posible cookie expirada o inválida","ERROR");
                         }
 
                         throw new Exception($"❌ Fallo en subida ZIP. Código HTTP: {resp.StatusCode}, Descripción: {resp.StatusDescription}", ex);
@@ -507,7 +507,7 @@ namespace AuditLogsExtractor
 
                 if (authCookies == null)
                 {
-                    Console.WriteLine("❌ No se obtuvieron cookies de autenticación.");
+                    Logger.Log("❌ No se obtuvieron cookies de autenticación.", "ERROR");
                     return;
                 }
 
@@ -539,7 +539,7 @@ namespace AuditLogsExtractor
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ Error inesperado en descarga de archivo '{sharepointRelativePath}': {ex.Message}");
+                Logger.Log($"Error inesperado en descarga de archivo '{sharepointRelativePath}': {ex.Message}","ERROR");
             }
         }
     }
