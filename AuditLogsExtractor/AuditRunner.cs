@@ -71,12 +71,10 @@ namespace AuditLogsExtractor
 
                 if (zipModeActivo)
                 {
-                    //Logger.Log("🛠️ Modo de ejecución ZIP activado.", "", ConsoleColor.Cyan);
                     orquestador.EjecutarZip();
                 }
                 else
                 {
-                    //Logger.Log("🛠️ Modo de ejecución Single activado.", "", ConsoleColor.Cyan);
                     orquestador.Ejecutar();
                 }
 

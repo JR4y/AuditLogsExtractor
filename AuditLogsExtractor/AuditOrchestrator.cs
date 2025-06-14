@@ -55,8 +55,6 @@ namespace AuditLogsExtractor
 
             foreach (var (entidad, otc) in _entidades)
             {
-                Logger.Log($"======== 📁 Procesando entidad: {entidad} ========", "", ConsoleColor.Blue);
-
                 List<string> recordIds = _readerProd.GetRecordIds(entidad, _fechaCorte);
                 var total = recordIds.Count;
                 var totalActual = 0;
@@ -83,12 +81,6 @@ namespace AuditLogsExtractor
                         totalActual = procesados + sinAuditoria + errores + prevProcesados;
                         if (totalActual % 10 == 0)
                         {
-
-                            // NUEVO: actualizamos UI
-                            //_progresoCallback?.Invoke(entidad, total, totalActual);
-                            //Logger.Progreso(entidad, total, totalActual, procesados, prevProcesados, sinAuditoria, errores);
-                            //Logger.FinalizarLineaProgreso(); // ← limpia la línea de progreso y salta de línea
-
                             var estado = new EstadoEntidadActual
                             {
                                 Entidad = entidad,
@@ -192,7 +184,9 @@ namespace AuditLogsExtractor
         #region Guardado resumen y bitácora
         private void GuardarResumenEntidad(string entidad, int totalActual, int sinAuditoria, int procesados, int errores, int prevProcesados, TimeSpan duracion)
         {
-            Logger.Log($"Resumen {entidad} - Exportados: {procesados}, Sin audit: {sinAuditoria}, Previos: {prevProcesados}, Errores: {errores}, Tiempo: {duracion:mm\\:ss}","OK");
+            //Logger.Log($"Resumen {entidad} - Exportados: {procesados}, Sin audit: {sinAuditoria}, Previos: {prevProcesados}, Errores: {errores}, Tiempo: {duracion:mm\\:ss}","OK");
+            Logger.Log($"Resumen {entidad} - Total procesados: {prevProcesados}","OK");
+
             try
             {
                 _bitacora.SaveExecutionSummary(new ResumenEjecucion
@@ -301,21 +295,43 @@ namespace AuditLogsExtractor
                     }
 
                     string prefijo = grupo.Key;
+                    total = grupo.Count();
+                    procesados = 0;
+                    errores = 0; 
+                    sinAuditoria = 0;
+                    prevProcesados = recordIds.Count - pendientes.Count;
+                    inicioEntidad = DateTime.Now;
 
                     // Saltar si ya está marcado como verificado
                     string keyVerificacion = $"{entidad}|{prefijo}";
                     if (carpetasYaVerificadas.Contains(keyVerificacion))
                     {
-                        Logger.Log($"Prefijo '{prefijo}' ya procesado previamente, se omite.");
+                        Logger.Log($"Prefijo '{prefijo}' ya procesado previamente, se omite.","OK");
                         continue;
                     }
 
-                    Logger.Log($"→ Prefijo '{prefijo}' ({grupo.Count()} registros)");
+                        //Logger.Log($"→ Prefijo '{prefijo}' ({grupo.Count()} registros)");
 
-                    foreach (var recordId in grupo)
-                    {
-                        ProcesarRegistroSinSubida(entidad, otc, recordId, _fechaCorte, ref procesados, ref errores, ref sinAuditoria, _token);
-                    }
+                        foreach (var recordId in grupo)
+                        {
+                            ProcesarRegistroSinSubida(entidad, otc, recordId, _fechaCorte, ref procesados, ref errores, ref sinAuditoria, _token);
+
+                            var estado = new EstadoEntidadActual
+                            {
+                                Entidad = entidad,
+                                Total = grupo.Count(),
+                                Actual = procesados + sinAuditoria + errores,
+                                Exportados = procesados,
+                                SinAuditoria = sinAuditoria,
+                                Previos = prevProcesados,
+                                Errores = errores,
+                                Duracion = DateTime.Now - inicioEntidad,
+                                Prefijo = prefijo,
+                                ZIP = true
+                            };
+
+                            _estadoCallback?.Invoke(estado);
+                        }
 
                     ComprimirYSubirZip(entidad, prefijo);
 
@@ -332,9 +348,6 @@ namespace AuditLogsExtractor
         }
         private void ProcesarRegistroSinSubida(string entidad, int otc, string recordId, DateTime fechaCorte, ref int procesados, ref int errores, ref int sinAuditoria, CancellationToken token)
         {
-            /*if (token.IsCancellationRequested)
-                return;*/
-
             try
             {
                 DateTime? ultimaFecha = _bitacora.GetLastExportedDate(entidad, recordId);
@@ -359,10 +372,7 @@ namespace AuditLogsExtractor
                 }
 
                 string archivo = _exporter.ExportGroupAsCsv(entidad, recordId, nuevos);
-
-                // No se sube el archivo ni se elimina
                 _bitacora.MarkAsExported(entidad, recordId, fechaCorte, "exportado_no_subido");
-
                 Interlocked.Increment(ref procesados);
             }
             catch (Exception ex)
@@ -427,7 +437,6 @@ namespace AuditLogsExtractor
                         _uploader.UploadZipFile(rutaZip, rutaRelativa);
                         File.Delete(rutaZip);
 
-                        // ✅ Marcar en bitácora como subido
                         foreach (var id in guidsDelLote)
                         {
                             _bitacora.MarkAsExported(entidad, id, _fechaCorte, "subido");
@@ -464,6 +473,7 @@ namespace AuditLogsExtractor
         public class EstadoEntidadActual
         {
             public string Entidad { get; set; }
+            public string Prefijo { get; set; }
             public int Total { get; set; }
             public int Actual { get; set; }
             public int Exportados { get; set; }
@@ -471,6 +481,7 @@ namespace AuditLogsExtractor
             public int Previos { get; set; }
             public int Errores { get; set; }
             public TimeSpan Duracion { get; set; }
+            public bool ZIP { get; set; } = false; // Indica si es un proceso ZIP
         }
         #endregion
 

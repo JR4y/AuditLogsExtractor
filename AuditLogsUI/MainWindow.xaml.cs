@@ -16,7 +16,6 @@ namespace AuditLogsUI
         {
             InitializeComponent();
 
-            // Redirigir los mensajes del logger a la consola WPF
             Logger.ExternalLogger = (mensaje, color) =>
             {
                 Dispatcher.Invoke(() =>
@@ -37,14 +36,6 @@ namespace AuditLogsUI
                     txtConsola.ScrollToEnd();
                 });
             };
-
-            /*Logger.ExternalProgress = progreso =>
-            {
-                Dispatcher.Invoke(() =>
-                {
-                    txtProgreso.Text = progreso;
-                });
-            };*/
         }
 
         private void btnIniciar_Click(object sender, RoutedEventArgs e)
@@ -53,6 +44,12 @@ namespace AuditLogsUI
 
             btnIniciar.IsEnabled = false;
             btnPausar.IsEnabled = true;
+
+            // Limpiar consola visual
+            txtConsola.Document.Blocks.Clear();
+            // Color de botón activo
+            //btnIniciar.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#93C5FD")); // Azul claro
+            //btnPausar.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#E5E7EB")); // Gris claro
 
             Thread hilo = new Thread(() =>
             {
@@ -74,6 +71,9 @@ namespace AuditLogsUI
                     {
                         btnIniciar.IsEnabled = true;
                         btnPausar.IsEnabled = false;
+
+                        btnIniciar.Tag = "activo";
+                        btnPausar.Tag = "";
                     });
                 }
             });
@@ -81,17 +81,36 @@ namespace AuditLogsUI
             hilo.IsBackground = true;
             hilo.Start();
         }
+        private void btnPausar_Click(object sender, RoutedEventArgs e)
+        {
+            _cts?.Cancel();
+
+            // Visual: marcar Pausar como activo
+            //btnPausar.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#93C5FD"));
+            //btnIniciar.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#E5E7EB"));
+
+            btnPausar.Tag = "activo";
+            btnIniciar.Tag = "";
+
+            Logger.Log("Pausa solicitada desde la interfaz.", "WARN");
+        }
 
         private void ActualizarEstadoEntidad(AuditOrchestrator.EstadoEntidadActual estado)
         {
             Dispatcher.Invoke(() =>
             {
-                //lblEntidadActual.Text = $"Entidad actual: {estado.Entidad} ({estado.Actual}/{estado.Total})";
-                lblEntidadActual.Text = $"Entidad actual: {estado.Entidad} ({estado.Actual}/{estado.Total}) - {((double)estado.Actual / Math.Max(1, estado.Total)):P0}";
                 progressEntidad.Maximum = estado.Total;
                 progressEntidad.Value = estado.Actual;
 
-                txtResumenEntidad.Text = $"🟩 {estado.Entidad}: Exportados {estado.Exportados} - Sin audit {estado.SinAuditoria} - Previos {estado.Previos} - Errores {estado.Errores} - ⏱️ {estado.Duracion:mm\\:ss}";
+                if (estado.ZIP) { 
+                    lblEntidadActual.Text = $"Prefijo actual: '{estado.Prefijo}' ({estado.Actual}/{estado.Total}) - {((double)estado.Actual / Math.Max(1, estado.Total)):P0}";
+                    txtResumenEntidad.Text = $"🟩 Entidad:{estado.Entidad} >> Exportados {estado.Exportados} - Sin audit {estado.SinAuditoria} - Errores {estado.Errores} - ⏱️ {estado.Duracion:hh\\:mm\\:ss}";
+                }
+                else
+                {
+                    lblEntidadActual.Text = $"Entidad actual: {estado.Entidad} ({estado.Actual}/{estado.Total}) - {((double)estado.Actual / Math.Max(1, estado.Total)):P0}";
+                    txtResumenEntidad.Text = $"🟩 {estado.Entidad}: Exportados {estado.Exportados} - Sin audit {estado.SinAuditoria} - Previos {estado.Previos} - Errores {estado.Errores} - ⏱️ {estado.Duracion:hh\\:mm\\:ss}";
+                }                                   
             });
         }
         private void MostrarCabecera(string fecha, string modo, string destino)
@@ -103,13 +122,6 @@ namespace AuditLogsUI
                 txtSharePointDestino.Text = destino;
             });
         }
-
-        private void btnPausar_Click(object sender, RoutedEventArgs e)
-        {
-            _cts?.Cancel();
-            Logger.Log("Pausa solicitada desde la interfaz.", "WARN");
-        }
-
         private void LogDesdeUI(string mensaje)
         {
             Dispatcher.Invoke(() =>
@@ -118,7 +130,6 @@ namespace AuditLogsUI
                 txtConsola.ScrollToEnd();
             });
         }
-
         private Color ConvertirColor(ConsoleColor color)
         {
             switch (color)
