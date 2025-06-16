@@ -64,7 +64,7 @@ namespace AuditLogsExtractor
                     var entidad = colName.Replace("bitacora_", "");
                     var col = _db.GetCollection<BitacoraItem>(colName);
 
-                    foreach (var item in col.Find(x => x.Estado == "error_subida"))
+                    foreach (var item in col.Find(x => x.Estado == "error_subida" || x.Estado == "error_subida_reintento"))
                     {
                         yield return (entidad, item.Id, item.UltimaFechaExportada);
                     }

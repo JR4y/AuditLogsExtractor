@@ -52,7 +52,7 @@ namespace AuditLogsExtractor
         public void Ejecutar()
         {
             EjecutarReintentosFallidos();
-
+            int _entprocesadas = 0;
             foreach (var (entidad, otc) in _entidades)
             {
                 List<string> recordIds = _readerProd.GetRecordIds(entidad, _fechaCorte);
@@ -90,9 +90,9 @@ namespace AuditLogsExtractor
                                 SinAuditoria = sinAuditoria,
                                 Previos = prevProcesados,
                                 Errores = errores,
-                                Duracion = DateTime.Now - inicioEntidad
+                                Duracion = DateTime.Now - inicioEntidad,
+                                EntitiesCompleted = _entprocesadas
                             };
-
                             _estadoCallback?.Invoke(estado);
                         }
                     });
@@ -106,6 +106,22 @@ namespace AuditLogsExtractor
                 {
                     var duracion = DateTime.Now - inicioEntidad;
                     totalActual = procesados + sinAuditoria + errores + prevProcesados;
+                    _entprocesadas++;
+
+                    var estado = new EstadoEntidadActual
+                    {
+                        Entidad = entidad,
+                        Total = 0,
+                        Actual = 0,
+                        Exportados = 0,
+                        SinAuditoria = 0,
+                        Previos = 0,
+                        Errores = 0,
+                        Duracion = DateTime.Now - inicioEntidad,
+                        EntitiesCompleted = _entprocesadas
+                    };
+                    _estadoCallback?.Invoke(estado);
+
                     GuardarResumenEntidad(entidad, totalActual, sinAuditoria, procesados, errores, prevProcesados, duracion);
                 }
             }
@@ -187,6 +203,7 @@ namespace AuditLogsExtractor
             //Logger.Log($"Resumen {entidad} - Exportados: {procesados}, Sin audit: {sinAuditoria}, Previos: {prevProcesados}, Errores: {errores}, Tiempo: {duracion:mm\\:ss}","OK");
             Logger.Log($"Resumen {entidad} - Total procesados: {prevProcesados}","OK");
 
+
             try
             {
                 _bitacora.SaveExecutionSummary(new ResumenEjecucion
@@ -215,7 +232,7 @@ namespace AuditLogsExtractor
                 _bitacora.SaveVerifiedFoldersFrom(_uploader.GetVerifiedFolders());
                 _bitacora.Close();
                 BitacoraManager.UploadBitacoraAndBackup(_uploader, _backupName);
-                Logger.Log("📤 Bitácora y respaldo subidos a SharePoint.", "", ConsoleColor.Magenta);
+                Logger.Log("📤 Bitácora y respaldo subidos a SharePoint.", "", ConsoleColor.DarkMagenta);
             }
             catch (Exception ex)
             {
@@ -266,7 +283,7 @@ namespace AuditLogsExtractor
             var carpetasYaVerificadas = _bitacora.GetVerifiedFolders(); // ← clave para evitar reprocesar
             foreach (var (entidad, otc) in _entidades)
             {
-                Logger.Log($"======== 📁 [ZIP] Procesando entidad: {entidad} ========", "", ConsoleColor.Cyan);
+                Logger.Log($"======== 📁 [ZIP] Procesando entidad: {entidad} ========", "", ConsoleColor.DarkCyan);
 
                 List<string> recordIds = _readerProd.GetRecordIds(entidad, _fechaCorte);
                 var guidsProcesados = _bitacora.GetRecordIdsByStatus(entidad, "subido")
@@ -482,6 +499,7 @@ namespace AuditLogsExtractor
             public int Errores { get; set; }
             public TimeSpan Duracion { get; set; }
             public bool ZIP { get; set; } = false; // Indica si es un proceso ZIP
+            public int EntitiesCompleted { get; set; } // o EntityIndex
         }
         #endregion
 

@@ -28,8 +28,8 @@ namespace AuditLogsExtractor
                     }
                 };
 
-                var runner = new AuditRunner();
-                runner.Ejecutar(cts.Token);
+                /*var runner = new AuditRunner();
+                runner.Ejecutar(cts.Token);*/
 
             }
             catch (OperationCanceledException)
