@@ -4,9 +4,9 @@ using System.Configuration;
 using System.IO;
 using System.Threading;
 
-namespace AuditLogsExtractor
+namespace D365AuditExporter
 {
-    public class AuditRunner
+    public class Runner
     {
         #region Header Parameters Class
         public class HeaderParameters
@@ -69,7 +69,7 @@ namespace AuditLogsExtractor
                 );
 
                 string backupName;
-                var logManager = BitacoraManager.DownloadOrCreateBitacora(uploader, out backupName);
+                var logManager = LogRepository.DownloadOrCreateBitacora(uploader, out backupName);
                 Logger.Log("Bitácora local lista (descargada y respaldada)", "", ConsoleColor.DarkMagenta);
 
                 var verifiedFolders = logManager.GetVerifiedFolders();
@@ -127,84 +127,58 @@ namespace AuditLogsExtractor
 
         #endregion
 
-        /*public void Ejecutar(CancellationToken token, Action<string> logCallback = null, Action<string, string, string> cabeceraCallback = null, Action<AuditOrchestrator.EstadoEntidadActual> estadoCallback = null)
-    {
-        try
-        {
-            _cabeceraCallback = cabeceraCallback;
-
-            // Leer conexiones
-            string connDev = ConfigurationManager.AppSettings["D365_CONNECTION_DEV"];
-            string connProd = ConfigurationManager.AppSettings["D365_CONNECTION_PROD"];
-
-            var readerDev = new DynamicsReader(connDev);
-            var config = readerDev.GetConfigurationParameters();
-            var readerProd = new DynamicsReader(connProd);
-
-            // Fecha de corte
-            int mesesConservar = int.Parse(config["months_to_keep"]);
-            DateTime fechaCorte = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1).AddMonths(-mesesConservar);
-
-            //Logger.Log($"Iniciando proceso de extracción - (Anteriores a {fechaCorte:MMM yy})");
-
-            // Entidades
-            var entidades = new List<(string logicalName, int otc)>();
-            int totalEntidades = int.Parse(config["total_entities"]);
-            for (int i = 1; i <= totalEntidades; i++)
-            {
-                entidades.Add((config[$"entity_{i}_logicalname"], int.Parse(config[$"entity_{i}_otc"])));
-            }
-
-            // ZIP Mode
-            bool zipModeActivo = config["zip_upload_mode"].Equals("true", StringComparison.OrdinalIgnoreCase);
-
-            // Componentes
-            var processor = new AuditProcessor(readerProd.GetService());
-            var exporter = new CsvExporter(readerProd.GetService(), "output", zipModeActivo);
-            var uploader = new SharePointUploader(
-                config["sp_site"],
-                config["sp_upload_folder"],
-                config["sp_user"],
-                config["sp_password"]);
-
-
-            //Asignar valores iniciales APP
-            _cabeceraCallback?.Invoke(
-                $"📅 Fecha corte: {fechaCorte:MMM yyyy}",
-                $"⚙️ Modo: {(zipModeActivo ? "ZIP" : "Single")}",
-                $"📂 SharePoint: {config["sp_upload_folder"]}" // ← asegúrate que sea público
-            );
-
-            string backupName;
-            var bitacora = BitacoraManager.DownloadOrCreateBitacora(uploader, out backupName);
-            Logger.Log("Bitácora local lista (descargada y respaldada)","",ConsoleColor.DarkMagenta);
-
-            var carpetasVerificadas = bitacora.GetVerifiedFolders();
-            uploader.SetVerifiedFolders(carpetasVerificadas);
-
-            var orquestador = new AuditOrchestrator(
-                readerProd, processor, exporter, uploader,
-                bitacora, backupName, entidades, fechaCorte, token, estadoCallback);
-
-            if (zipModeActivo)
-            {
-                orquestador.EjecutarZip();
-            }
-            else
-            {
-                orquestador.Ejecutar();
-            }
-
-            Logger.Log("Extracción de auditoría finalizada con éxito.","OK");
-        }
-        catch (OperationCanceledException)
-        {
-            Logger.Log("⏹️ Extracción pausada por señal externa.","WARN");
-        }
-        catch (Exception ex)
-        {
-            Logger.Log($"Error fatal: {ex}","ERROR");
-        }
-    }*/
+    }
 }
-}
+
+
+/*
+ * 20
+ * https://auditlogsapi-ray-agemahbkhzekdhht.westeurope-01.azurewebsites.net/api/auditlogs
+ * 
+ * 6
+ * 
+ * 
+ * https://ufinet.sharepoint.com/sites/billing
+ * Documentos%20compartidos/AuditExport_TESTING
+ * 
+ * crm-pre@lyntia.com
+ * LynT1a#21!
+ * 
+ * Entidad	Logical Name	Object Type Code	Habilitado
+Acción de aplicación	appaction	10690	No
+Agrupación Facturas	new_agrupacionfacturas	10369	No
+Anexo permuta	new_anexocontrato	10006	No
+Aprobación	msdyn_flow_approval	11497	No
+Aprobación de Flow	msdyn_flow_flowapproval	11504	No
+Cliente	account	1	No
+Cobro Puntual Cliente	lyn_cobros_puntuales_cliente	10864	No
+Cobros Puntuales	lyn_cobros_puntuales	10521	No
+Configuración de facturación	new_configuraciondefacturacion	10373	No
+Configuración de la aplicación basada en modelo	appsetting	10500	No
+Configuración de la organización	organizationsetting	10621	No
+Contacto	contact	2	No
+Contrato marco	new_contratomarco	10010	No
+Datos del modelo de aprobación básico	msdyn_flow_basicapprovalmodel	11503	No
+Definición de parámetro	msdyn_productivityparameterdefinition	10580	No
+Dirección	customeraddress	1071	No
+Evento de flujo	flowevent	11464	No
+Facturas	new_factura	10375	No
+Gestión de Modificaciones	lyn_gestiondemodificaciones	11021	No
+Identificador facturas	lyn_identificadorfacturas	10638	No
+Imagen de máquina de flujo	flowmachineimage	10951	No
+Línea de configuración de facturación	new_lineadeconfiguraciondefacturacion	10382	No
+Línea de factura	new_lneadefactura	10383	No
+Masking Rule	maskingrule	74	No
+Oferta	quote	1084	Sí
+Parámetro de entrada de acción	msdyn_productivityactioninputparameter	10574	No
+Plantilla de acción de macro	msdyn_productivitymacroactiontemplate	10576	No
+Producto de oferta	quotedetail	1085	No
+Producto del proyecto	salesorderdetail	1089	No
+Referencia	lead	4	No
+Regla de acción de aplicación	appactionrule	10941	No
+Respuesta de aprobación	msdyn_flow_approvalresponse	11499	No
+Secuencias Facturación	new_secuenciasfacturacion	10390	No
+Servicios contratados	new_servicioscontratados	10028	No
+Solicitud de aprobación	msdyn_flow_approvalrequest	11498	No
+Usuario	systemuser	8	No
+*/

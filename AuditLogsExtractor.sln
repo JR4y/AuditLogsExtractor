@@ -7,6 +7,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AuditLogsExtractor", "Audit
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AuditLogsUI", "AuditLogsUI\AuditLogsUI.csproj", "{A3AB81F2-916B-4794-8558-0D6959D8D473}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "D365AuditExporter", "D365AuditExporter\D365AuditExporter.csproj", "{AF253E5D-FADA-403F-92A3-BF3CE05D98FE}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -31,6 +33,14 @@ Global
 		{A3AB81F2-916B-4794-8558-0D6959D8D473}.Release|Any CPU.Build.0 = Release|Any CPU
 		{A3AB81F2-916B-4794-8558-0D6959D8D473}.Release|x64.ActiveCfg = Release|Any CPU
 		{A3AB81F2-916B-4794-8558-0D6959D8D473}.Release|x64.Build.0 = Release|Any CPU
+		{AF253E5D-FADA-403F-92A3-BF3CE05D98FE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AF253E5D-FADA-403F-92A3-BF3CE05D98FE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AF253E5D-FADA-403F-92A3-BF3CE05D98FE}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{AF253E5D-FADA-403F-92A3-BF3CE05D98FE}.Debug|x64.Build.0 = Debug|Any CPU
+		{AF253E5D-FADA-403F-92A3-BF3CE05D98FE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AF253E5D-FADA-403F-92A3-BF3CE05D98FE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AF253E5D-FADA-403F-92A3-BF3CE05D98FE}.Release|x64.ActiveCfg = Release|Any CPU
+		{AF253E5D-FADA-403F-92A3-BF3CE05D98FE}.Release|x64.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

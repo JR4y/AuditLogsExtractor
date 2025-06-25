@@ -27,9 +27,8 @@ namespace AuditLogsExtractor
                         cts.Cancel();
                     }
                 };
-
-                /*var runner = new AuditRunner();
-                runner.Ejecutar(cts.Token);*/
+               AuditRunner _runner = new AuditRunner();
+               _runner.Execute(cts.Token, _runner.LoadHeaderParameters());
 
             }
             catch (OperationCanceledException)
